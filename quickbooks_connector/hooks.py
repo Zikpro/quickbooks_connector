@@ -9,6 +9,34 @@ app_license = "mit"
 # Includes in <head>
 # ------------------
 
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [
+            ["dt", "in", [
+                "Customer", "Supplier", "Item",
+                "Sales Invoice", "Purchase Invoice", "Payment Entry"
+            ]],
+            ["fieldname", "like", "quickbooks_%"]
+        ]
+    }
+]
+
+doctype_js = {
+    "Quickbooks Setting": "public/js/quickbooks_setting.js"
+}
+
+doc_events = {
+    "Sales Invoice": {
+        "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_submit"
+    },
+    "Purchase Invoice": {
+        "on_submit": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_submit"
+    }
+}
+
+
+
 # include js, css files in header of desk.html
 # app_include_css = "/assets/quickbooks_connector/css/quickbooks_connector.css"
 # app_include_js = "/assets/quickbooks_connector/js/quickbooks_connector.js"
@@ -132,6 +160,15 @@ app_license = "mit"
 
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+    "hourly": [
+        "quickbooks_connector.api.scheduled_token_refresh"
+    ],
+    "daily": [
+        "quickbooks_connector.api.scheduled_sync"
+    ],
+}
 
 # scheduler_events = {
 # 	"all": [

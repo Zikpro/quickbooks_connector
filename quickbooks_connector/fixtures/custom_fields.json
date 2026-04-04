@@ -1,0 +1,176 @@
+[
+  {
+    "doctype": "Custom Field",
+    "name": "Customer-quickbooks_id",
+    "dt": "Customer",
+    "fieldname": "quickbooks_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks ID",
+    "read_only": 1,
+    "no_copy": 1,
+    "in_list_view": 0
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Supplier-quickbooks_id",
+    "dt": "Supplier",
+    "fieldname": "quickbooks_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks ID",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Item-quickbooks_id",
+    "dt": "Item",
+    "fieldname": "quickbooks_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks ID",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Invoice-quickbooks_id",
+    "dt": "Sales Invoice",
+    "fieldname": "quickbooks_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks Invoice ID",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Invoice-quickbooks_doc_number",
+    "dt": "Sales Invoice",
+    "fieldname": "quickbooks_doc_number",
+    "fieldtype": "Data",
+    "label": "QuickBooks Doc Number",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Invoice-quickbooks_last_sync",
+    "dt": "Sales Invoice",
+    "fieldname": "quickbooks_last_sync",
+    "fieldtype": "Datetime",
+    "label": "QuickBooks Last Sync",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Invoice-quickbooks_sync_status",
+    "dt": "Sales Invoice",
+    "fieldname": "quickbooks_sync_status",
+    "fieldtype": "Select",
+    "label": "QuickBooks Sync Status",
+    "options": "\nPending\nSynced\nError",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Sales Invoice-quickbooks_sync_error",
+    "dt": "Sales Invoice",
+    "fieldname": "quickbooks_sync_error",
+    "fieldtype": "Small Text",
+    "label": "QuickBooks Sync Error",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Invoice-quickbooks_id",
+    "dt": "Purchase Invoice",
+    "fieldname": "quickbooks_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks Bill ID",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Invoice-quickbooks_doc_number",
+    "dt": "Purchase Invoice",
+    "fieldname": "quickbooks_doc_number",
+    "fieldtype": "Data",
+    "label": "QuickBooks Doc Number",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Invoice-quickbooks_last_sync",
+    "dt": "Purchase Invoice",
+    "fieldname": "quickbooks_last_sync",
+    "fieldtype": "Datetime",
+    "label": "QuickBooks Last Sync",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Invoice-quickbooks_sync_status",
+    "dt": "Purchase Invoice",
+    "fieldname": "quickbooks_sync_status",
+    "fieldtype": "Select",
+    "label": "QuickBooks Sync Status",
+    "options": "\nPending\nSynced\nError",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Purchase Invoice-quickbooks_sync_error",
+    "dt": "Purchase Invoice",
+    "fieldname": "quickbooks_sync_error",
+    "fieldtype": "Small Text",
+    "label": "QuickBooks Sync Error",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Payment Entry-quickbooks_payment_id",
+    "dt": "Payment Entry",
+    "fieldname": "quickbooks_payment_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks Payment ID",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Payment Entry-quickbooks_bill_payment_id",
+    "dt": "Payment Entry",
+    "fieldname": "quickbooks_bill_payment_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks Bill Payment ID",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Payment Entry-quickbooks_sync_status",
+    "dt": "Payment Entry",
+    "fieldname": "quickbooks_sync_status",
+    "fieldtype": "Select",
+    "label": "QuickBooks Sync Status",
+    "options": "\nPending\nSynced\nError",
+    "read_only": 1,
+    "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Payment Entry-quickbooks_sync_timestamp",
+    "dt": "Payment Entry",
+    "fieldname": "quickbooks_sync_timestamp",
+    "fieldtype": "Datetime",
+    "label": "QuickBooks Sync Timestamp",
+    "read_only": 1,
+    "no_copy": 1
+  }
+]

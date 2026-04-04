@@ -1,0 +1,39 @@
+/* Sync Status Indicators */
+.indicator {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.indicator.green { background-color: #2CA01C; }
+.indicator.red { background-color: #ff5858; }
+.indicator.orange { background-color: #ffa726; }
+.indicator.blue { background-color: #5e64ff; }
+.indicator.gray { background-color: #8d99a6; }
+
+/* List view sync status */
+.list-row[data-quickbooks-status="synced"] {
+    border-left: 3px solid #2CA01C !important;
+}
+
+.list-row[data-quickbooks-status="error"] {
+    border-left: 3px solid #ff5858 !important;
+}
+
+.list-row[data-quickbooks-status="pending"] {
+    border-left: 3px solid #ffa726 !important;
+}
+
+/* Bulk action button */
+.btn-quickbooks {
+    background-color: #5e64ff !important;
+    color: white !important;
+    border-color: #5e64ff !important;
+}
+
+.btn-quickbooks:hover {
+    background-color: #4a52e6 !important;
+    border-color: #4a52e6 !important;
+}
