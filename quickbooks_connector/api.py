@@ -26,7 +26,8 @@ def get_settings():
         settings = frappe.get_all(
             "Quickbooks Setting",
             filters={"name": ["!=", ""]},
-            limit=1
+            limit=1,
+            ignore_permissions=True
         )
         if not settings:
             frappe.throw(
@@ -34,7 +35,8 @@ def get_settings():
             )
         return frappe.get_doc(
             "Quickbooks Setting",
-            settings[0].name
+            settings[0].name,
+            ignore_permissions=True
         )
     except Exception as e:
         frappe.log_error(
@@ -115,85 +117,57 @@ def get_authorization_url():
 @frappe.whitelist(allow_guest=True)
 def oauth_callback(code=None, state=None, realmId=None, error=None):
     """Handle OAuth 2.0 callback from QuickBooks"""
+    
+    # Switch to Administrator for this callback
+    frappe.set_user("Administrator")
+    
     try:
-        # Handle OAuth errors
         if error:
             error_msg = f"OAuth Error: {error}"
             frappe.log_error("QuickBooks OAuth Error", error_msg)
             return render_error_page("OAuth Error", error)
 
-        # Validate required parameters
         if not code:
-            return render_error_page(
-                "Missing Code",
-                "No authorization code received"
-            )
+            return render_error_page("Missing Code", "No authorization code received")
 
-        # Verify state parameter
         if not state:
-            return render_error_page(
-                "Missing State",
-                "No state parameter received"
-            )
+            return render_error_page("Missing State", "No state parameter received")
 
-        # Get stored state
         stored_state = frappe.cache().get_value(f"quickbooks_state:{state}")
         if not stored_state:
-            return render_error_page(
-                "Invalid State",
-                "State parameter verification failed or expired"
-            )
+            return render_error_page("Invalid State", "State parameter verification failed or expired")
 
-        # Clear used state
         frappe.cache().delete_key(f"quickbooks_state:{state}")
-        
-        frappe.logger().debug(
-            f"QuickBooks Callback - Code: {code[:10]}..., RealmId: {realmId}"
-        )
+
+        frappe.logger().debug(f"QuickBooks Callback - Code: {code[:10]}..., RealmId: {realmId}")
 
         settings = get_settings()
 
-        # Exchange code for tokens
         token_data = exchange_code_for_tokens(code, settings)
         if not token_data:
-            return render_error_page(
-                "Token Exchange Failed",
-                "Failed to exchange authorization code for tokens"
-            )
+            return render_error_page("Token Exchange Failed", "Failed to exchange authorization code for tokens")
 
-        # Save tokens
         save_tokens(settings, token_data, realmId)
 
-        # Test connection
         test_result = test_connection()
         if test_result.get("success"):
             settings.is_connected = 1
             settings.company_name = test_result.get("company_name", "")
-            settings.save()
+            settings.save(ignore_permissions=True)
             frappe.db.commit()
 
-            # Log successful connection
-            log_action(
-                "Connection Established",
-                {
-                    "company": settings.company_name,
-                    "realm_id": realmId,
-                    "timestamp": now_datetime()
-                }
-            )
+            log_action("Connection Established", {
+                "company": settings.company_name,
+                "realm_id": realmId,
+                "timestamp": now_datetime()
+            })
 
             return render_success_page()
         else:
-            return render_error_page(
-                "Connection Test Failed",
-                test_result.get('error', 'Unknown error')
-            )
+            return render_error_page("Connection Test Failed", test_result.get('error', 'Unknown error'))
 
     except Exception as e:
-        frappe.log_error(
-            title="QuickBooks OAuth Callback Error",
-            message=str(e)
-        )
+        frappe.log_error(title="QuickBooks OAuth Callback Error", message=str(e))
         return render_error_page("Connection Error", str(e))
 
 def exchange_code_for_tokens(code, settings):
@@ -1007,7 +981,6 @@ def push_sales_invoice_to_quickbooks(sales_invoice_name: str):
         frappe.log_error("QuickBooks Invoice Push Error", f"{sales_invoice_name}: {str(e)}")
         return {"success": False, "error": str(e)}
 
-
 def create_qb_invoice_from_sales_invoice(si):
     """
     Core logic:
@@ -1027,20 +1000,43 @@ def create_qb_invoice_from_sales_invoice(si):
     # Ensure Customer has QB ID
     qb_customer_id = frappe.db.get_value("Customer", si.customer, "quickbooks_id")
     if not qb_customer_id:
-        # Minimal safe approach: require customer already synced from QB -> ERP
-        # Later we can implement ERP->QB customer creation
-        msg = f"Customer '{si.customer}' does not have QuickBooks ID (quickbooks_id). Sync customers first."
+        msg = f"Customer '{si.customer}' does not have QuickBooks ID. Sync customers first."
         _mark_sales_invoice_sync_error(si, msg)
         frappe.throw(_(msg))
+
+    # Default tax code from settings (fallback: 12 = No VAT)
+    default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
+
+    # UK VAT rate to QB Tax Code ID - automatic mapping
+    def get_qb_tax_code(tax_rate):
+        rate = float(tax_rate or 0)
+        if rate >= 20:
+            return "3"    # 20.0% S - Standard VAT
+        elif rate >= 5:
+            return "8"    # 5.0% R - Reduced VAT
+        elif rate > 0:
+            return "10"   # 0.0% Z - Zero Rated
+        else:
+            return default_tax_code  # No VAT
+
+    # Get invoice level tax rate
+    invoice_tax_rate = 0
+    if si.taxes:
+        for tax in si.taxes:
+            if float(tax.rate or 0) > 0:
+                invoice_tax_rate = float(tax.rate)
+                break
 
     # Build invoice lines
     lines = []
     for row in si.items:
         qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
         if not qb_item_id:
-            msg = f"Item '{row.item_code}' missing QuickBooks ID (quickbooks_id). Sync items first."
+            msg = f"Item '{row.item_code}' missing QuickBooks ID. Sync items first."
             _mark_sales_invoice_sync_error(si, msg)
             frappe.throw(_(msg))
+
+        tax_code_id = get_qb_tax_code(invoice_tax_rate)
 
         line = {
             "DetailType": "SalesItemLineDetail",
@@ -1049,7 +1045,8 @@ def create_qb_invoice_from_sales_invoice(si):
             "SalesItemLineDetail": {
                 "ItemRef": {"value": str(qb_item_id)},
                 "Qty": float(row.qty),
-                "UnitPrice": float(row.rate)
+                "UnitPrice": float(row.rate),
+                "TaxCodeRef": {"value": tax_code_id}
             }
         }
         lines.append(line)
@@ -1059,19 +1056,9 @@ def create_qb_invoice_from_sales_invoice(si):
         _mark_sales_invoice_sync_error(si, msg)
         frappe.throw(_(msg))
 
-    # DocNumber in QB (your ERP invoice number)
-    doc_number = si.name  # or si.get("invoice_number") if you use custom numbering
+    doc_number = si.name
 
-    # Dates
-    txn_date = getdate(si.posting_date) if si.posting_date else getdate(now_datetime())
-    due_date = getdate(si.due_date) if getattr(si, "due_date", None) else txn_date
-
-    # Taxes (Minimal safe handling)
-    # QuickBooks tax mapping is complex (TaxCodeRef etc.)
-    # For now: if ERP invoice has taxes, we still create invoice, but don't push tax detail.
-    # Later we can map tax templates -> QB TaxCode.
-    has_taxes = bool(getattr(si, "taxes", None)) and len(si.taxes) > 0
-
+    # Build payload
     payload = {
         "CustomerRef": {"value": str(qb_customer_id)},
         "DocNumber": str(si.name),
@@ -1081,52 +1068,19 @@ def create_qb_invoice_from_sales_invoice(si):
     }
 
     # -------------------------------
-    # TAX HANDLING (QB FORMAT)
+    # TAX HANDLING (QB UK FORMAT)
+    # QB automatically calculates VAT based on TaxCodeRef in line items
+    # We just set GlobalTaxCalculation
     # -------------------------------
-    if si.taxes:
-        total_tax = 0
-        tax_lines = []
-
-        for tax in si.taxes:
-            if tax.tax_amount and float(tax.tax_amount) > 0:
-                total_tax += float(tax.tax_amount)
-
-                tax_account = tax.account_head
-
-                qb_tax_account_id = frappe.db.get_value(
-                    "Account",
-                    tax_account,
-                    "quickbooks_id"
-                )
-
-                if not qb_tax_account_id:
-                    frappe.throw(
-                        f"Tax Account '{tax_account}' not mapped to QuickBooks (missing quickbooks_id on Account)."
-                    )
-
-                tax_lines.append({
-                    "Amount": float(tax.tax_amount),
-                    "DetailType": "TaxLineDetail",
-                    "TaxLineDetail": {
-                        "TaxRateRef": {
-                            "value": str(qb_tax_account_id)
-                        },
-                        "PercentBased": True,
-                        "TaxPercent": float(tax.rate)
-                    }
-                })
-
-        if tax_lines:
-            payload["TxnTaxDetail"] = {
-                "TotalTax": float(total_tax),
-                "TaxLine": tax_lines
-            }
-
+    if invoice_tax_rate > 0:
+        payload["GlobalTaxCalculation"] = "TaxExcluded"
+    else:
+        payload["GlobalTaxCalculation"] = "NotApplicable"
 
     # Create invoice in QB
     qb_response = api.make_request("invoice", method="POST", data=payload, params={"minorversion": 65})
 
-    qb_invoice = qb_response.get("Invoice") or qb_response  # depending on response structure
+    qb_invoice = qb_response.get("Invoice") or qb_response
     qb_invoice_id = None
 
     if isinstance(qb_invoice, dict):
@@ -1139,7 +1093,7 @@ def create_qb_invoice_from_sales_invoice(si):
 
     # Save mapping back to ERPNext Sales Invoice
     si.db_set("quickbooks_id", qb_invoice_id)
-    si.db_set("quickbooks_invoice_doc_number", doc_number)
+    si.db_set("quickbooks_doc_number", doc_number)
     si.db_set("quickbooks_last_sync", now_datetime())
     si.db_set("quickbooks_sync_status", "Synced")
     si.db_set("quickbooks_sync_error", "")
@@ -1187,9 +1141,9 @@ def push_purchase_invoice_to_quickbooks(purchase_invoice_name: str):
 def create_qb_bill_from_purchase_invoice(pi):
     """
     Purchase Invoice -> QuickBooks Bill
-    FIXED: Safe field handling
+    With UK VAT tax handling
     """
-    
+
     # Prevent duplicates
     if getattr(pi, "quickbooks_id", None):
         return {"qb_bill_id": pi.quickbooks_id, "skipped": True}
@@ -1200,32 +1154,58 @@ def create_qb_bill_from_purchase_invoice(pi):
     # Ensure Supplier has QB ID
     qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
     if not qb_vendor_id:
-        msg = f"Supplier '{pi.supplier}' does not have QuickBooks ID (quickbooks_id). Sync suppliers first."
+        msg = f"Supplier '{pi.supplier}' does not have QuickBooks ID. Sync suppliers first."
         _mark_purchase_invoice_sync_error(pi, msg)
         frappe.throw(_(msg))
 
     frappe.logger().info(f"Supplier: {pi.supplier}, QB Vendor ID: {qb_vendor_id}")
 
+    # Default tax code from settings (fallback: 12 = No VAT)
+    default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
+
+    # UK VAT rate to QB Tax Code ID - automatic mapping (Purchase side)
+    def get_qb_tax_code(tax_rate):
+        rate = float(tax_rate or 0)
+        if rate >= 20:
+            return "3"    # 20.0% S - Standard VAT
+        elif rate >= 5:
+            return "8"    # 5.0% R - Reduced VAT
+        elif rate > 0:
+            return "10"   # 0.0% Z - Zero Rated
+        else:
+            return default_tax_code  # No VAT
+
+    # Get invoice level tax rate
+    invoice_tax_rate = 0
+    if pi.taxes:
+        for tax in pi.taxes:
+            if float(tax.rate or 0) > 0:
+                invoice_tax_rate = float(tax.rate)
+                break
+
     # Find a QB expense account
-    # Method 1: Try to find any expense account with QB ID
     qb_account_id = frappe.db.get_value(
         "Account",
         [
             ["company", "=", settings.company],
             ["quickbooks_id", "!=", ""],
+            ["quickbooks_id", "!=", None],
             ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
         ],
         "quickbooks_id"
     )
-    
-    # Method 2: If not found, use hardcoded "Accounting" account ID 69
+
+    # Fallback hardcoded expense account
     if not qb_account_id:
-        qb_account_id = "69"  # Accounting expense account ID from your QB
+        qb_account_id = "69"
         frappe.logger().warning(f"Using hardcoded QB expense account ID: {qb_account_id}")
 
     frappe.logger().info(f"Using QB account ID: {qb_account_id} for purchase invoice {pi.name}")
 
-    # Build bill lines - SIMPLE FORMAT
+    # Tax code for lines
+    tax_code_id = get_qb_tax_code(invoice_tax_rate)
+
+    # Build bill lines with TaxCodeRef
     lines = []
     for idx, row in enumerate(pi.items):
         line = {
@@ -1235,6 +1215,9 @@ def create_qb_bill_from_purchase_invoice(pi):
             "AccountBasedExpenseLineDetail": {
                 "AccountRef": {
                     "value": qb_account_id
+                },
+                "TaxCodeRef": {
+                    "value": tax_code_id
                 }
             }
         }
@@ -1245,7 +1228,7 @@ def create_qb_bill_from_purchase_invoice(pi):
         _mark_purchase_invoice_sync_error(pi, msg)
         frappe.throw(_(msg))
 
-    # Build payload - MINIMAL
+    # Build payload
     payload = {
         "VendorRef": {
             "value": qb_vendor_id
@@ -1254,19 +1237,19 @@ def create_qb_bill_from_purchase_invoice(pi):
         "Line": lines
     }
 
-    # ---------- TAX INJECTION ----------
-    qb_tax_detail = build_qb_tax_detail(pi)
-    if qb_tax_detail:
-        payload["TxnTaxDetail"] = qb_tax_detail
-
-  
-    
-
+    # -------------------------------
+    # TAX HANDLING (QB UK FORMAT)
+    # QB automatically calculates VAT based on TaxCodeRef in line items
+    # -------------------------------
+    if invoice_tax_rate > 0:
+        payload["GlobalTaxCalculation"] = "TaxExcluded"
+    else:
+        payload["GlobalTaxCalculation"] = "NotApplicable"
 
     # Add optional fields
     if pi.name:
         payload["DocNumber"] = pi.name
-    
+
     if getattr(pi, "due_date", None):
         payload["DueDate"] = getdate(pi.due_date).strftime('%Y-%m-%d')
 
@@ -1275,7 +1258,7 @@ def create_qb_bill_from_purchase_invoice(pi):
     try:
         # Create the bill
         qb_response = api.make_request("bill", method="POST", data=payload, params={"minorversion": 65})
-        
+
         qb_bill = qb_response.get("Bill") or qb_response
         qb_bill_id = qb_bill.get("Id") if isinstance(qb_bill, dict) else None
 
@@ -1284,7 +1267,7 @@ def create_qb_bill_from_purchase_invoice(pi):
             _mark_purchase_invoice_sync_error(pi, msg)
             frappe.throw(_(msg))
 
-        # Mark as successfully synced using safe method
+        # Mark as successfully synced
         _mark_purchase_invoice_sync_success(pi, qb_bill_id, pi.name)
 
         log_action(
@@ -1294,6 +1277,8 @@ def create_qb_bill_from_purchase_invoice(pi):
                 "qb_bill_id": qb_bill_id,
                 "supplier": pi.supplier,
                 "total": pi.grand_total,
+                "tax_rate": invoice_tax_rate,
+                "tax_code_id": tax_code_id,
                 "qb_account_id": qb_account_id,
                 "vendor_qb_id": qb_vendor_id
             },
@@ -1304,7 +1289,6 @@ def create_qb_bill_from_purchase_invoice(pi):
         return {"qb_bill_id": qb_bill_id}
 
     except requests.exceptions.HTTPError as e:
-        # Get detailed error from QuickBooks
         error_details = "Unknown error"
         try:
             if e.response and e.response.text:
@@ -1317,11 +1301,11 @@ def create_qb_bill_from_purchase_invoice(pi):
                     frappe.logger().error(f"Full Error: {e.response.text}")
         except:
             error_details = str(e)
-        
+
         msg = f"QuickBooks API Error: {error_details}"
         _mark_purchase_invoice_sync_error(pi, msg)
         frappe.throw(_(msg))
-        
+
     except Exception as e:
         error_msg = f"QuickBooks API Error: {str(e)}"
         _mark_purchase_invoice_sync_error(pi, error_msg)
@@ -1424,7 +1408,8 @@ def _mark_purchase_invoice_sync_success(pi, qb_bill_id=None, doc_number=None):
         if qb_bill_id:
             update_fields["quickbooks_id"] = qb_bill_id
         if doc_number:
-            update_fields["quickbooks_bill_doc_number"] = doc_number
+            update_fields["quickbooks_doc_number"] = doc_number
+        
         
         frappe.db.set_value("Purchase Invoice", pi.name, update_fields)
         frappe.db.commit()
@@ -1832,12 +1817,12 @@ def sync_accounts():
     
 
 def create_or_update_account(qb_account):
-    """Update existing accounts with QuickBooks ID mapping - WITHOUT quickbooks_account_type"""
+    """Map QuickBooks accounts to ERPNext accounts"""
     try:
         account_id = qb_account.get('Id')
         account_name = qb_account.get('Name')
         account_type = qb_account.get('AccountType', '')
-        
+
         if not account_id or not account_name:
             return "skipped"
 
@@ -1845,7 +1830,6 @@ def create_or_update_account(qb_account):
         if not company:
             return "skipped"
 
-        # Map QB account types to ERPNext account types
         type_mapping = {
             'Bank': ['Bank', 'Cash'],
             'Accounts Receivable': ['Receivable'],
@@ -1865,10 +1849,8 @@ def create_or_update_account(qb_account):
         }
 
         erp_account_types = type_mapping.get(account_type, [])
-        
         matched_account = None
-        
-        # Try to match by account type first
+
         for erp_type in erp_account_types:
             type_accounts = frappe.get_all(
                 "Account",
@@ -1876,52 +1858,40 @@ def create_or_update_account(qb_account):
                     "account_type": erp_type,
                     "company": company,
                     "is_group": 0,
-                    "quickbooks_id": ["in", ["", None]]  # Not already mapped
+                    "quickbooks_id": ["in", ["", None]]
                 },
                 fields=["name", "account_name", "account_type"],
                 limit=10
             )
-            
+
             if type_accounts:
-                # Use the first unmapped account of this type
                 for acc in type_accounts:
                     if not acc.get('quickbooks_id'):
                         matched_account = acc
-                        frappe.logger().info(
-                            f"Matched by type: QB '{account_name}' ({account_type}) -> "
-                            f"ERP '{acc.account_name}' ({acc.account_type})"
-                        )
                         break
                 if matched_account:
                     break
 
         if matched_account:
-            # Update the account with QB ID
             account = frappe.get_doc("Account", matched_account.name)
             account.quickbooks_id = account_id
-            
-            # Store additional QB info in description or custom field if available
-            # Store QB info safely (ERP Account has no description field)
-        qb_info = f"QB: {account_name} ({account_type})"
 
-        if hasattr(account, "remarks"):
-            if not account.remarks:
-                account.remarks = qb_info
-            elif qb_info not in account.remarks:
-                account.remarks = f"{account.remarks} | {qb_info}"
+            qb_info = f"QB: {account_name} ({account_type})"
+            if hasattr(account, "remarks"):
+                if not account.remarks:
+                    account.remarks = qb_info
+                elif qb_info not in account.remarks:
+                    account.remarks = f"{account.remarks} | {qb_info}"
 
-            
             account.save(ignore_permissions=True)
             frappe.db.commit()
-            
+
             frappe.logger().info(
                 f"Mapped: QB '{account_name}' ({account_type}, ID: {account_id}) -> "
                 f"ERP '{account.account_name}' ({account.account_type})"
             )
-            
             return "updated"
         else:
-            # Log for manual mapping
             frappe.logger().debug(
                 f"No match for QB Account: '{account_name}' (Type: {account_type}, ID: {account_id})"
             )
@@ -3183,17 +3153,19 @@ def sync_recent_payments(days=7):
 # ============ TASK 6: Logging ============
 
 def log_action(action, details, status="Info", settings_name=None, entity_type=None, entity_id=None, error=None):
-    """Log actions to Quickbooks Sync Log - WITHOUT VALIDATION"""
+    """Log actions to Quickbooks Sync Log"""
     try:
-        # Try to attach settings record
         if not settings_name:
             try:
-                s = get_settings()
-                settings_name = s.name
+                settings = frappe.get_all(
+                    "Quickbooks Setting",
+                    limit=1,
+                    ignore_permissions=True
+                )
+                settings_name = settings[0].name if settings else None
             except Exception:
                 settings_name = None
-        
-        # No validation - accept any entity type
+
         log_entry = {
             "doctype": "Quickbooks Sync Log",
             "action": action,
@@ -3205,10 +3177,11 @@ def log_action(action, details, status="Info", settings_name=None, entity_type=N
             "entity_id": entity_id,
             "error": error
         }
-                
-        frappe.get_doc(log_entry).insert(ignore_permissions=True)
+
+        log_doc = frappe.get_doc(log_entry)
+        log_doc.insert(ignore_permissions=True)
         frappe.db.commit()
-        
+
     except Exception as e:
         frappe.log_error(title="QuickBooks Logging Error", message=str(e))
 

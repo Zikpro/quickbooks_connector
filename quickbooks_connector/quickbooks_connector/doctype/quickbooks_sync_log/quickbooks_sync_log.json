@@ -24,9 +24,9 @@
   {
    "fieldname": "quickbook_settings",
    "fieldtype": "Link",
-   "label": "Quickbook Settings",
-   "options": "Quickbook Settings"
-  },
+   "label": "Quickbooks Setting",
+   "options": "Quickbooks Setting"
+},
   {
    "fieldname": "status",
    "fieldtype": "Select",

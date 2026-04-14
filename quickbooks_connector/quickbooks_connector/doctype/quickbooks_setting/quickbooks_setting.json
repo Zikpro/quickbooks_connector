@@ -34,7 +34,8 @@
   "default_warehouse",
   "token_expiry",
   "default_country",
-  "company"
+  "company",
+  "default_tax_code"
  ],
  "fields": [
   {
@@ -221,7 +222,14 @@
    "label": "Company",
    "options": "Company",
    "reqd": 1
-  }
+  },
+  {
+   "default": "12",
+   "fieldname": "default_tax_code",
+   "fieldtype": "Data",
+   "label": "Default QB Tax Code ID",
+   "description": "QuickBooks Tax Code ID to use when no tax is mapped (e.g. 12 for No VAT)"
+}
  ],
  "index_web_pages_for_search": 1,
  "links": [],

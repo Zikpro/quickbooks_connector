@@ -172,5 +172,15 @@
     "label": "QuickBooks Sync Timestamp",
     "read_only": 1,
     "no_copy": 1
+  },
+  {
+    "doctype": "Custom Field",
+    "name": "Account-quickbooks_id",
+    "dt": "Account",
+    "fieldname": "quickbooks_id",
+    "fieldtype": "Data",
+    "label": "QuickBooks ID",
+    "read_only": 1,
+    "no_copy": 1
   }
 ]
