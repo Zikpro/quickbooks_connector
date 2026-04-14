@@ -13,15 +13,6 @@
   "realm_id_company_id",
   "is_connected",
   "default_account",
-  "enable_auto_sync",
-  "sync_items",
-  "sync_customers",
-  "sync_payments",
-  "sync_accounts",
-  "sync_suppliers",
-  "sync_bill_payments",
-  "auto_sync_sales_invoice",
-  "auto_sync_purchase_invoice",
   "connection_status",
   "column_break_sfew",
   "client_secret",
@@ -86,64 +77,6 @@
    "fieldtype": "Link",
    "label": "Default Account",
    "options": "Account"
-  },
-  {
-   "default": "0",
-   "fieldname": "enable_auto_sync",
-   "fieldtype": "Check",
-   "label": "Enable Auto Sync"
-  },
-  {
-   "default": "0",
-   "fieldname": "sync_items",
-   "fieldtype": "Check",
-   "label": "Sync Items"
-  },
-  {
-   "default": "0",
-   "fieldname": "sync_customers",
-   "fieldtype": "Check",
-   "label": "Sync Customers"
-  },
-  {
-   "default": "0",
-   "depends_on": "eval:doc.is_connected",
-   "fieldname": "sync_payments",
-   "fieldtype": "Check",
-   "label": "Sync Payments"
-  },
-  {
-   "default": "0",
-   "depends_on": "eval:doc.is_connected",
-   "fieldname": "sync_accounts",
-   "fieldtype": "Check",
-   "label": "Sync Accounts"
-  },
-  {
-   "default": "0",
-   "depends_on": "eval:doc.is_connected",
-   "fieldname": "sync_suppliers",
-   "fieldtype": "Check",
-   "label": "Sync Suppliers"
-  },
-  {
-   "default": "0",
-   "depends_on": "eval:doc.is_connected",
-   "fieldname": "sync_bill_payments",
-   "fieldtype": "Check",
-   "label": "Sync Bill Payments"
-  },
-  {
-   "default": "0",
-   "fieldname": "auto_sync_sales_invoice",
-   "fieldtype": "Check",
-   "label": "Auto Sync Sales Invoice on Submit"
-  },
-  {
-   "default": "0",
-   "fieldname": "auto_sync_purchase_invoice",
-   "fieldtype": "Check",
-   "label": "Auto Sync Purchase Invoice on Submit"
   },
   {
    "fieldname": "connection_status",

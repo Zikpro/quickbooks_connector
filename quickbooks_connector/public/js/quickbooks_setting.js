@@ -168,36 +168,7 @@ function setup_sync_section(frm) {
         
         // ===============================
         // INDIVIDUAL SYNC BUTTONS
-        // ===============================
-        if (frm.doc.sync_customers) {
-            frm.add_custom_button(
-                __("Sync Customers"),
-                function() {
-                    sync_customers_data(frm);
-                },
-                button_group
-            );
-        }
-        
-        if (frm.doc.sync_items) {
-            frm.add_custom_button(
-                __("Sync Items"),
-                function() {
-                    sync_items_data(frm);
-                },
-                button_group
-            );
-        }
-        
-        if (frm.doc.sync_payments) {
-            frm.add_custom_button(
-                __("Sync Payments"),
-                function() {
-                    sync_payments_data(frm);
-                },
-                button_group
-            );
-        }
+       
         
         // ===============================
         // VIEW SYNC STATUS
@@ -360,7 +331,7 @@ frm.add_custom_button(
 );
         
        
-frm.add_custom_button(
+ frm.add_custom_button(
     __("Test Bill API"),
     function() {
         frappe.call({
@@ -373,7 +344,7 @@ frm.add_custom_button(
         });
     },
     __("Debug")
-);
+  );
 
     }
 }
