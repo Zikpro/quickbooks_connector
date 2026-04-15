@@ -798,7 +798,7 @@ def create_or_update_customer(qb_customer):
             customer_data["mobile_no"] = primary_phone.get('FreeFormNumber')
 
         billing_address = qb_customer.get('BillAddr', {})
-        if billing_address:
+        if billing_address and billing_address.get('Country'):
             address_fields = {
                 'Line1': 'address_line1',
                 'Line2': 'address_line2',
