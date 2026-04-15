@@ -767,11 +767,23 @@ def create_or_update_customer(qb_customer):
         )
 
         # Prepare customer data
+        # Customer group — use existing one if default not found
+        customer_group = DEFAULT_CUSTOMER_GROUP
+        if not frappe.db.exists("Customer Group", customer_group):
+            customer_group = frappe.db.get_value("Customer Group", 
+                {"is_group": 0}, "name") or "All Customer Groups"
+
+        # Territory — use existing one if default not found  
+        territory = DEFAULT_TERRITORY
+        if not frappe.db.exists("Territory", territory):
+            territory = frappe.db.get_value("Territory", 
+                {}, "name") or "All Territories"
+
         customer_data = {
             "customer_name": qb_customer.get('DisplayName') or qb_customer.get('FullyQualifiedName'),
             "customer_type": DEFAULT_CUSTOMER_TYPE,
-            "customer_group": DEFAULT_CUSTOMER_GROUP,
-            "territory": DEFAULT_TERRITORY,
+            "customer_group": customer_group,
+            "territory": territory,
             "quickbooks_id": customer_id,
             "disabled": qb_customer.get('Active') == False
         }
