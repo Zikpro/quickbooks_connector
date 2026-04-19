@@ -26,6 +26,17 @@ doctype_js = {
     "Quickbooks Setting": "public/js/quickbooks_setting.js"
 }
 
+doctype_js = {
+    "Quickbooks Setting": "public/js/quickbooks_setting.js",
+    "Sales Invoice": "public/js/sales_invoice.js",
+    "Purchase Invoice": "public/js/purchase_invoice.js"
+}
+
+doctype_list_js = {
+    "Sales Invoice": "public/js/sales_invoice_list.js",
+    "Purchase Invoice": "public/js/purchase_invoice_list.js"
+}
+
 doc_events = {
     "Sales Invoice": {
         "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_submit"
