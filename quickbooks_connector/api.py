@@ -1079,6 +1079,54 @@ def create_qb_invoice_from_sales_invoice(si):
         "Line": lines
     }
 
+    # Billing Address add karo
+    if si.customer_address:
+        try:
+            addr = frappe.get_doc("Address", si.customer_address)
+            bill_addr = {}
+            if addr.address_line1:
+                bill_addr["Line1"] = addr.address_line1
+            if addr.address_line2:
+                bill_addr["Line2"] = addr.address_line2
+            if addr.city:
+                bill_addr["City"] = addr.city
+            if addr.state:
+                bill_addr["CountrySubDivisionCode"] = addr.state
+            if addr.pincode:
+                bill_addr["PostalCode"] = addr.pincode
+            if addr.country:
+                bill_addr["Country"] = addr.country
+            if bill_addr:
+                payload["BillAddr"] = bill_addr
+        except Exception:
+            pass
+
+    # Payment Terms add karo
+    # Payment Terms add karo
+    if si.payment_terms_template:
+        try:
+            terms_response = api.make_request(
+                f"query?query=SELECT * FROM Term",
+                params={"minorversion": 65}
+            )
+            terms_list = terms_response.get('QueryResponse', {}).get('Term', [])
+            # Name match karo case-insensitive
+            template_name = si.payment_terms_template.lower()
+            matched_term = None
+            for term in terms_list:
+                if term.get('Name', '').lower() == template_name:
+                    matched_term = term
+                    break
+            if matched_term:
+                payload["SalesTermRef"] = {"value": str(matched_term.get('Id'))}
+        except Exception:
+            pass
+    elif si.due_date:
+        payload["DueDate"] = str(si.due_date)
+
+
+
+
     # -------------------------------
     # TAX HANDLING (QB UK FORMAT)
     # QB automatically calculates VAT based on TaxCodeRef in line items
