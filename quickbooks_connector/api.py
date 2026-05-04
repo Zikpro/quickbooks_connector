@@ -1101,20 +1101,30 @@ def create_qb_invoice_from_sales_invoice(si):
         except Exception:
             pass
 
-    # Payment Terms add karo
-    # Payment Terms add karo
+    # Customer Email add karo
+    try:
+        customer_email = None
+        if getattr(si, 'contact_email', None):
+            customer_email = si.contact_email
+        else:
+            customer_email = frappe.db.get_value("Customer", si.customer, "email_id")
+        if customer_email:
+            payload["BillEmail"] = {"Address": customer_email}
+    except Exception:
+        pass
+
+    # Payment Terms add karo - case insensitive match
     if si.payment_terms_template:
         try:
             terms_response = api.make_request(
-                f"query?query=SELECT * FROM Term",
+                "query?query=SELECT * FROM Term",
                 params={"minorversion": 65}
             )
             terms_list = terms_response.get('QueryResponse', {}).get('Term', [])
-            # Name match karo case-insensitive
-            template_name = si.payment_terms_template.lower()
+            template_name = si.payment_terms_template.lower().strip()
             matched_term = None
             for term in terms_list:
-                if term.get('Name', '').lower() == template_name:
+                if term.get('Name', '').lower().strip() == template_name:
                     matched_term = term
                     break
             if matched_term:
@@ -1123,9 +1133,6 @@ def create_qb_invoice_from_sales_invoice(si):
             pass
     elif si.due_date:
         payload["DueDate"] = str(si.due_date)
-
-
-
 
     # -------------------------------
     # TAX HANDLING (QB UK FORMAT)
