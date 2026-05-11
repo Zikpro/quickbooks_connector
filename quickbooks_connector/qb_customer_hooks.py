@@ -63,31 +63,30 @@ def sync_customer_to_qb(doc, qb_customer_id):
         payload["PrimaryPhone"] = {"FreeFormNumber": doc.mobile_no}
 
     # Address update — primary billing address dhundo
-    primary_address = frappe.db.get_value(
-        "Address",
+    # Customer primary address dhundo via Dynamic Link table
+    address_name = frappe.db.get_value(
+        "Dynamic Link",
         {
             "link_doctype": "Customer",
             "link_name": doc.name,
-            "is_primary_address": 1
+            "parenttype": "Address"
         },
-        ["address_line1", "address_line2", "city", "state", "pincode", "country", "email_id"],
-        as_dict=True
+        "parent"
     )
 
-    if not primary_address:
-        # Koi bhi address lo agar primary nahi hai
-        address_name = frappe.db.get_value(
-            "Dynamic Link",
-            {"link_doctype": "Customer", "link_name": doc.name, "parenttype": "Address"},
-            "parent"
+    # Agar primary address set hai toh use karo
+    if doc.customer_primary_address:
+        address_name = doc.customer_primary_address
+
+    primary_address = None
+    if address_name:
+        primary_address = frappe.db.get_value(
+            "Address",
+            address_name,
+            ["address_line1", "address_line2", "city", "state", 
+            "pincode", "country", "email_id"],
+            as_dict=True
         )
-        if address_name:
-            primary_address = frappe.db.get_value(
-                "Address",
-                address_name,
-                ["address_line1", "address_line2", "city", "state", "pincode", "country", "email_id"],
-                as_dict=True
-            )
 
     if primary_address:
         bill_addr = {}
