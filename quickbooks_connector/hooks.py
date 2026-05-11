@@ -43,6 +43,9 @@ doc_events = {
     },
     "Purchase Invoice": {
         "on_submit": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_submit"
+    },
+    "Customer": {
+        "on_update": "quickbooks_connector.qb_customer_hooks.on_customer_update"
     }
 }
 
