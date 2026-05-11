@@ -1102,12 +1102,22 @@ def create_qb_invoice_from_sales_invoice(si):
             pass
 
     # Customer Email add karo
+    # Customer Email add karo
     try:
         customer_email = None
-        if getattr(si, 'contact_email', None):
+        # 1. Pehle Address doc se email lo
+        if si.customer_address:
+            customer_email = frappe.db.get_value(
+                "Address", si.customer_address, "email_id"
+            )
+        # 2. Phir contact email
+        if not customer_email and getattr(si, 'contact_email', None):
             customer_email = si.contact_email
-        else:
-            customer_email = frappe.db.get_value("Customer", si.customer, "email_id")
+        # 3. Last resort — Customer ki email
+        if not customer_email:
+            customer_email = frappe.db.get_value(
+                "Customer", si.customer, "email_id"
+            )
         if customer_email:
             payload["BillEmail"] = {"Address": customer_email}
     except Exception:
@@ -1124,7 +1134,20 @@ def create_qb_invoice_from_sales_invoice(si):
             template_name = si.payment_terms_template.lower().strip()
             matched_term = None
             for term in terms_list:
-                if term.get('Name', '').lower().strip() == template_name:
+                qb_term_name = term.get('Name', '').lower().strip()
+                # Exact match
+                if qb_term_name == template_name:
+                    matched_term = term
+                    break
+                # Partial match — "net 30" matches "NET 30"
+                if template_name.replace(' ', '') == qb_term_name.replace(' ', ''):
+                    matched_term = term
+                    break
+                # Number match — "30 days term" aur "net 30" dono mein "30" hai
+                import re
+                erp_numbers = re.findall(r'\d+', template_name)
+                qb_numbers = re.findall(r'\d+', qb_term_name)
+                if erp_numbers and qb_numbers and erp_numbers[0] == qb_numbers[0]:
                     matched_term = term
                     break
             if matched_term:
