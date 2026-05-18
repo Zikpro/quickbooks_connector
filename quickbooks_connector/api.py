@@ -758,6 +758,10 @@ def create_or_update_customer(qb_customer):
         customer_id = qb_customer.get('Id')
         if not customer_id:
             return "skipped"
+        
+        settings = get_settings() 
+        
+        
 
         # Check if exists
         existing = frappe.db.get_value(
@@ -785,7 +789,8 @@ def create_or_update_customer(qb_customer):
             "customer_group": customer_group,
             "territory": territory,
             "quickbooks_id": customer_id,
-            "disabled": qb_customer.get('Active') == False
+            "disabled": qb_customer.get('Active') == False,
+            "custom_company": settings.company         
         }
 
         # Add contact info
@@ -842,6 +847,8 @@ def create_or_update_supplier(qb_vendor):
         supplier_name = qb_vendor.get("DisplayName") or qb_vendor.get("CompanyName")
         if not supplier_name:
             return "skipped"
+        
+        settings = get_settings() 
 
         existing = frappe.db.get_value(
             "Supplier",
@@ -853,7 +860,8 @@ def create_or_update_supplier(qb_vendor):
             "supplier_name": supplier_name,
             "supplier_type": "Company",
             "quickbooks_id": vendor_id,
-            "disabled": qb_vendor.get("Active") is False
+            "disabled": qb_vendor.get("Active") is False,
+            "custom_company": settings.company
         }
 
         if existing:
@@ -2900,6 +2908,8 @@ def create_or_update_item(qb_item):
         item_name = qb_item.get('Name')
         if not item_id or not item_name:
             return "skipped"
+        
+        settings = get_settings()
 
         # Check if exists
         existing = frappe.db.get_value(
@@ -2917,7 +2927,8 @@ def create_or_update_item(qb_item):
             "stock_uom": DEFAULT_STOCK_UOM,
             "is_stock_item": 0,
             "quickbooks_id": item_id,
-            "disabled": qb_item.get('Active') == False
+            "disabled": qb_item.get('Active') == False,
+            "custom_company": settings.company
         }
 
         # Handle item type
