@@ -39,16 +39,17 @@ doctype_list_js = {
 
 doc_events = {
     "Sales Invoice": {
-        "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_submit"
+        "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_submit",
+        "on_cancel": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_cancel"
     },
     "Purchase Invoice": {
-        "on_submit": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_submit"
+        "on_submit": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_submit",
+        "on_cancel": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_cancel"
     },
     "Customer": {
         "on_update": "quickbooks_connector.qb_customer_hooks.on_customer_update"
     }
 }
-
 
 
 # include js, css files in header of desk.html
