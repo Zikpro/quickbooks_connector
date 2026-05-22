@@ -10,7 +10,6 @@ def on_sales_invoice_submit(doc, method=None):
     if not auto:
         return
     try:
-        # Check if this is a return invoice
         if getattr(doc, "is_return", 0):
             create_qb_credit_memo_from_return(doc)
         else:
@@ -33,7 +32,6 @@ def on_sales_invoice_cancel(doc, method=None):
         from quickbooks_connector.api import QuickBooksAPI, log_action
         api = QuickBooksAPI()
 
-        # Fetch current invoice for SyncToken
         qb_response = api.make_request(
             f"invoice/{qb_invoice_id}",
             params={"minorversion": 65}
@@ -45,7 +43,6 @@ def on_sales_invoice_cancel(doc, method=None):
             frappe.log_error("QB Invoice Void Error", f"No SyncToken for QB Invoice ID: {qb_invoice_id}")
             return
 
-        # Void in QB
         api.make_request(
             "invoice",
             method="POST",
@@ -53,8 +50,8 @@ def on_sales_invoice_cancel(doc, method=None):
             params={"minorversion": 65, "operation": "void"}
         )
 
-        doc.db_set("quickbooks_sync_status", "Voided")
-        doc.db_set("quickbooks_sync_error", "")
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_sync_status", "Voided")
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_sync_error", "")
 
         frappe.msgprint(
             f"QuickBooks Invoice {qb_invoice_id} voided successfully.",
@@ -71,37 +68,48 @@ def on_sales_invoice_cancel(doc, method=None):
         frappe.log_error("QB Invoice Void Error", f"Sales Invoice: {doc.name}, Error: {str(e)}")
 
 
-def create_qb_credit_memo_from_return(doc):
-    """Create Credit Memo in QB from ERPNext Return Sales Invoice"""
+def on_sales_invoice_amend(doc, method=None):
+    """Update QB Invoice when Sales Invoice is amended in ERPNext"""
     try:
+        # after_insert fires on every new doc — only proceed if amended
+        if not getattr(doc, "amended_from", None):
+            return
+
+        # Only proceed when submitted
+        if doc.docstatus != 1:
+            return
+
         settings = get_settings()
         if not settings.is_connected:
             return
 
-        # Prevent duplicates
-        if getattr(doc, "quickbooks_id", None):
+        original_qb_id = frappe.db.get_value(
+            "Sales Invoice", doc.amended_from, "quickbooks_id"
+        )
+        if not original_qb_id:
             return
 
         from quickbooks_connector.api import QuickBooksAPI, log_action
         api = QuickBooksAPI()
 
-        # Customer QB ID
-        qb_customer_id = frappe.db.get_value("Customer", doc.customer, "quickbooks_id")
-        if not qb_customer_id:
-            msg = f"Customer '{doc.customer}' missing QuickBooks ID. Sync customers first."
-            frappe.throw(_(msg))
+        qb_response = api.make_request(
+            f"invoice/{original_qb_id}",
+            params={"minorversion": 65}
+        )
+        invoice_data = qb_response.get("Invoice", {})
+        sync_token = invoice_data.get("SyncToken")
 
-        # Default tax code
+        if not sync_token:
+            frappe.log_error("QB Invoice Amend Error", f"No SyncToken for QB Invoice ID: {original_qb_id}")
+            return
+
         default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
 
         def get_qb_tax_code(tax_rate):
             rate = float(tax_rate or 0)
-            if rate >= 20:
-                return "3"
-            elif rate >= 5:
-                return "8"
-            elif rate > 0:
-                return "10"
+            if rate >= 20: return "3"
+            elif rate >= 5: return "8"
+            elif rate > 0: return "10"
             return default_tax_code
 
         invoice_tax_rate = 0
@@ -111,13 +119,107 @@ def create_qb_credit_memo_from_return(doc):
                     invoice_tax_rate = float(tax.rate)
                     break
 
-        # Build lines
+        qb_customer_id = frappe.db.get_value("Customer", doc.customer, "quickbooks_id")
+        if not qb_customer_id:
+            return
+
+        lines = []
+        for row in doc.items:
+            qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
+            if not qb_item_id:
+                continue
+            lines.append({
+                "DetailType": "SalesItemLineDetail",
+                "Amount": float(row.amount),
+                "Description": row.description or row.item_name or row.item_code,
+                "SalesItemLineDetail": {
+                    "ItemRef": {"value": str(qb_item_id)},
+                    "Qty": float(row.qty),
+                    "UnitPrice": float(row.rate),
+                    "TaxCodeRef": {"value": get_qb_tax_code(invoice_tax_rate)}
+                }
+            })
+
+        update_payload = {
+            "Id": str(original_qb_id),
+            "SyncToken": str(sync_token),
+            "CustomerRef": {"value": str(qb_customer_id)},
+            "TxnDate": str(doc.posting_date),
+            "DueDate": str(doc.due_date),
+            "Line": lines,
+            "sparse": True
+        }
+
+        if invoice_tax_rate > 0:
+            update_payload["GlobalTaxCalculation"] = "TaxExcluded"
+        else:
+            update_payload["GlobalTaxCalculation"] = "NotApplicable"
+
+        api.make_request(
+            "invoice",
+            method="POST",
+            data=update_payload,
+            params={"minorversion": 65}
+        )
+
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_id", original_qb_id)
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_sync_status", "Synced")
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_last_sync", frappe.utils.now_datetime())
+
+        frappe.msgprint(
+            f"QuickBooks Invoice {original_qb_id} updated successfully.",
+            title="QB Invoice Updated", indicator="green"
+        )
+
+        log_action(
+            "ERPNext Invoice Amended -> QuickBooks Invoice Updated",
+            {"sales_invoice": doc.name, "qb_invoice_id": original_qb_id, "amended_from": doc.amended_from},
+            entity_type="Invoice", entity_id=original_qb_id
+        )
+
+    except Exception as e:
+        frappe.log_error("QB Invoice Amend Error", f"Sales Invoice: {doc.name}, Error: {str(e)}")
+
+
+def create_qb_credit_memo_from_return(doc):
+    """Create Credit Memo in QB from ERPNext Return Sales Invoice"""
+    try:
+        settings = get_settings()
+        if not settings.is_connected:
+            return
+
+        if getattr(doc, "quickbooks_id", None):
+            return
+
+        from quickbooks_connector.api import QuickBooksAPI, log_action
+        api = QuickBooksAPI()
+
+        qb_customer_id = frappe.db.get_value("Customer", doc.customer, "quickbooks_id")
+        if not qb_customer_id:
+            frappe.throw(_(f"Customer '{doc.customer}' missing QuickBooks ID. Sync customers first."))
+
+        default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
+
+        def get_qb_tax_code(tax_rate):
+            rate = float(tax_rate or 0)
+            if rate >= 20: return "3"
+            elif rate >= 5: return "8"
+            elif rate > 0: return "10"
+            return default_tax_code
+
+        invoice_tax_rate = 0
+        if doc.taxes:
+            for tax in doc.taxes:
+                if float(tax.rate or 0) > 0:
+                    invoice_tax_rate = float(tax.rate)
+                    break
+
         lines = []
         for row in doc.items:
             qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
             if not qb_item_id:
                 frappe.throw(_(f"Item '{row.item_code}' missing QuickBooks ID."))
-
             lines.append({
                 "DetailType": "SalesItemLineDetail",
                 "Amount": abs(float(row.amount)),
@@ -142,7 +244,6 @@ def create_qb_credit_memo_from_return(doc):
         else:
             payload["GlobalTaxCalculation"] = "NotApplicable"
 
-        # Billing address
         if doc.customer_address:
             try:
                 addr = frappe.get_doc("Address", doc.customer_address)
@@ -158,7 +259,6 @@ def create_qb_credit_memo_from_return(doc):
             except Exception:
                 pass
 
-        # Create Credit Memo in QB
         qb_response = api.make_request(
             "creditmemo",
             method="POST",
@@ -172,10 +272,10 @@ def create_qb_credit_memo_from_return(doc):
         if not credit_memo_id:
             frappe.throw(_(f"QB Credit Memo creation failed: {frappe.as_json(qb_response)}"))
 
-        doc.db_set("quickbooks_id", credit_memo_id)
-        doc.db_set("quickbooks_sync_status", "Synced")
-        doc.db_set("quickbooks_sync_error", "")
-        doc.db_set("quickbooks_last_sync", frappe.utils.now_datetime())
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_id", credit_memo_id)
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_sync_status", "Synced")
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Sales Invoice", doc.name, "quickbooks_last_sync", frappe.utils.now_datetime())
 
         frappe.msgprint(
             f"Credit Memo created in QuickBooks. ID: {credit_memo_id}",
@@ -191,121 +291,3 @@ def create_qb_credit_memo_from_return(doc):
     except Exception as e:
         frappe.log_error("QB Credit Memo Error", f"Return Invoice: {doc.name}, Error: {str(e)}")
         frappe.throw(_(f"QB Credit Memo Error: {str(e)}"))
-
-
-def on_sales_invoice_amend(doc, method=None):
-    """Update QB Invoice when Sales Invoice is amended in ERPNext"""
-    try:
-        settings = get_settings()
-        if not settings.is_connected:
-            return
-
-        # Check if this is an amended doc
-        if not doc.amended_from:
-            return
-
-        # Get original QB invoice ID from the amended_from document
-        original_qb_id = frappe.db.get_value(
-            "Sales Invoice", doc.amended_from, "quickbooks_id"
-        )
-        if not original_qb_id:
-            return
-
-        from quickbooks_connector.api import QuickBooksAPI, log_action
-        api = QuickBooksAPI()
-
-        # Fetch original QB invoice for SyncToken
-        qb_response = api.make_request(
-            f"invoice/{original_qb_id}",
-            params={"minorversion": 65}
-        )
-        invoice_data = qb_response.get("Invoice", {})
-        sync_token = invoice_data.get("SyncToken")
-
-        if not sync_token:
-            frappe.log_error("QB Invoice Amend Error", f"No SyncToken for QB Invoice ID: {original_qb_id}")
-            return
-
-        # Default tax code
-        default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
-
-        def get_qb_tax_code(tax_rate):
-            rate = float(tax_rate or 0)
-            if rate >= 20: return "3"
-            elif rate >= 5: return "8"
-            elif rate > 0: return "10"
-            return default_tax_code
-
-        invoice_tax_rate = 0
-        if doc.taxes:
-            for tax in doc.taxes:
-                if float(tax.rate or 0) > 0:
-                    invoice_tax_rate = float(tax.rate)
-                    break
-
-        # Customer QB ID
-        qb_customer_id = frappe.db.get_value("Customer", doc.customer, "quickbooks_id")
-        if not qb_customer_id:
-            return
-
-        # Build updated lines
-        lines = []
-        for row in doc.items:
-            qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
-            if not qb_item_id:
-                continue
-            lines.append({
-                "DetailType": "SalesItemLineDetail",
-                "Amount": float(row.amount),
-                "Description": row.description or row.item_name or row.item_code,
-                "SalesItemLineDetail": {
-                    "ItemRef": {"value": str(qb_item_id)},
-                    "Qty": float(row.qty),
-                    "UnitPrice": float(row.rate),
-                    "TaxCodeRef": {"value": get_qb_tax_code(invoice_tax_rate)}
-                }
-            })
-
-        # Update payload with SyncToken
-        update_payload = {
-            "Id": str(original_qb_id),
-            "SyncToken": str(sync_token),
-            "CustomerRef": {"value": str(qb_customer_id)},
-            "TxnDate": str(doc.posting_date),
-            "DueDate": str(doc.due_date),
-            "Line": lines,
-            "sparse": True
-        }
-
-        if invoice_tax_rate > 0:
-            update_payload["GlobalTaxCalculation"] = "TaxExcluded"
-        else:
-            update_payload["GlobalTaxCalculation"] = "NotApplicable"
-
-        # Update in QB
-        api.make_request(
-            "invoice",
-            method="POST",
-            data=update_payload,
-            params={"minorversion": 65}
-        )
-
-        # Save QB ID on amended doc
-        doc.db_set("quickbooks_id", original_qb_id)
-        doc.db_set("quickbooks_sync_status", "Synced")
-        doc.db_set("quickbooks_sync_error", "")
-        doc.db_set("quickbooks_last_sync", frappe.utils.now_datetime())
-
-        frappe.msgprint(
-            f"QuickBooks Invoice {original_qb_id} updated successfully.",
-            title="QB Invoice Updated", indicator="green"
-        )
-
-        log_action(
-            "ERPNext Invoice Amended -> QuickBooks Invoice Updated",
-            {"sales_invoice": doc.name, "qb_invoice_id": original_qb_id, "amended_from": doc.amended_from},
-            entity_type="Invoice", entity_id=original_qb_id
-        )
-
-    except Exception as e:
-        frappe.log_error("QB Invoice Amend Error", f"Sales Invoice: {doc.name}, Error: {str(e)}")

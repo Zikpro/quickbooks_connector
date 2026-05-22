@@ -67,7 +67,7 @@
     "fieldname": "quickbooks_sync_status",
     "fieldtype": "Select",
     "label": "QuickBooks Sync Status",
-    "options": "\nPending\nSynced\nError",
+    "options": "\nPending\nSynced\nError\nVoided",
     "read_only": 1,
     "no_copy": 1
   },
@@ -118,7 +118,7 @@
     "fieldname": "quickbooks_sync_status",
     "fieldtype": "Select",
     "label": "QuickBooks Sync Status",
-    "options": "\nPending\nSynced\nError",
+    "options": "\nPending\nSynced\nError\nVoided",
     "read_only": 1,
     "no_copy": 1
   },
@@ -159,7 +159,7 @@
     "fieldname": "quickbooks_sync_status",
     "fieldtype": "Select",
     "label": "QuickBooks Sync Status",
-    "options": "\nPending\nSynced\nError",
+    "options": "\nPending\nSynced\nError\nVoided",
     "read_only": 1,
     "no_copy": 1
   },

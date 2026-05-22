@@ -39,12 +39,12 @@ doc_events = {
     "Sales Invoice": {
         "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_submit",
         "on_cancel": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_cancel",
-        "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_amend"
+        "after_insert": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_amend"
     },
     "Purchase Invoice": {
         "on_submit": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_submit",
         "on_cancel": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_cancel",
-        "on_submit_after_save": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_amend"
+        "after_insert": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_amend"
     },
     "Payment Entry": {
         "on_cancel": "quickbooks_connector.qb_payment_hooks.on_payment_entry_cancel"
