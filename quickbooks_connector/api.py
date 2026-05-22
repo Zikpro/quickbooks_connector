@@ -3523,3 +3523,48 @@ def initialize():
 # Initialize on module load
 if frappe.db:
     frappe.get_all("Quickbooks Setting", limit=1)
+
+
+
+@frappe.whitelist()
+def test_void_bill(bill_id):
+    """Test void a bill in QB directly"""
+    try:
+        api = QuickBooksAPI()
+        
+        # Fetch bill
+        qb_response = api.make_request(
+            f"bill/{bill_id}",
+            params={"minorversion": 65}
+        )
+        print(f"Bill fetch response: {frappe.as_json(qb_response)}")
+        
+        bill_data = qb_response.get("Bill", {})
+        sync_token = bill_data.get("SyncToken")
+        
+        if not sync_token:
+            return {"success": False, "error": "No SyncToken found", "response": qb_response}
+        
+        # Void payload
+        void_payload = {
+            "Id": str(bill_id),
+            "SyncToken": str(sync_token),
+            "sparse": True
+        }
+        
+        # Void request
+        void_response = api.make_request(
+            "bill",
+            method="POST",
+            data=void_payload,
+            params={"minorversion": 65, "operation": "void"}
+        )
+        
+        return {
+            "success": True,
+            "sync_token": sync_token,
+            "void_response": void_response
+        }
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}

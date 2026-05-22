@@ -22,9 +22,6 @@ fixtures = [
     }
 ]
 
-doctype_js = {
-    "Quickbooks Setting": "public/js/quickbooks_setting.js"
-}
 
 doctype_js = {
     "Quickbooks Setting": "public/js/quickbooks_setting.js",
@@ -37,19 +34,29 @@ doctype_list_js = {
     "Purchase Invoice": "public/js/purchase_invoice_list.js"
 }
 
+# Document Events
 doc_events = {
     "Sales Invoice": {
         "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_submit",
-        "on_cancel": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_cancel"
+        "on_cancel": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_cancel",
+        "on_submit": "quickbooks_connector.qb_invoice_hooks.on_sales_invoice_amend"
     },
     "Purchase Invoice": {
         "on_submit": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_submit",
-        "on_cancel": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_cancel"
+        "on_cancel": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_cancel",
+        "on_submit_after_save": "quickbooks_connector.qb_purchase_hooks.on_purchase_invoice_amend"
+    },
+    "Payment Entry": {
+        "on_cancel": "quickbooks_connector.qb_payment_hooks.on_payment_entry_cancel"
     },
     "Customer": {
         "on_update": "quickbooks_connector.qb_customer_hooks.on_customer_update"
     }
 }
+ 
+# Installation
+after_install = "quickbooks_connector.install.after_install"
+after_uninstall = "quickbooks_connector.install.after_uninstall"
 
 
 # include js, css files in header of desk.html
