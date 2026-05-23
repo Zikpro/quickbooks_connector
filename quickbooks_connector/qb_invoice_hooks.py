@@ -291,3 +291,61 @@ def create_qb_credit_memo_from_return(doc):
     except Exception as e:
         frappe.log_error("QB Credit Memo Error", f"Return Invoice: {doc.name}, Error: {str(e)}")
         frappe.throw(_(f"QB Credit Memo Error: {str(e)}"))
+
+
+@frappe.whitelist()
+def manual_create_credit_memo(sales_invoice_name):
+    """Manually create Credit Memo in QB for a return Sales Invoice"""
+    try:
+        si = frappe.get_doc("Sales Invoice", sales_invoice_name)
+        if not si.is_return:
+            return {"success": False, "error": "This is not a return invoice"}
+        
+        from quickbooks_connector.qb_invoice_hooks import create_qb_credit_memo_from_return
+        # Temporarily clear QB ID to allow processing
+        original_qb_id = si.quickbooks_id
+        si.quickbooks_id = None
+        create_qb_credit_memo_from_return(si)
+        return {"success": True, "message": "Credit Memo created successfully"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def manual_create_vendor_credit(purchase_invoice_name):
+    """Manually create Vendor Credit in QB for a return Purchase Invoice"""
+    try:
+        pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
+        if not pi.is_return:
+            return {"success": False, "error": "This is not a return invoice"}
+        
+        from quickbooks_connector.qb_purchase_hooks import create_qb_vendor_credit_from_return
+        pi.quickbooks_id = None
+        create_qb_vendor_credit_from_return(pi)
+        return {"success": True, "message": "Vendor Credit created successfully"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def manual_void_bill(purchase_invoice_name):
+    """Manually void a Bill in QB"""
+    try:
+        pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
+        from quickbooks_connector.qb_purchase_hooks import on_purchase_invoice_cancel
+        on_purchase_invoice_cancel(pi)
+        return {"success": True, "message": "Bill voided successfully"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def manual_void_payment(payment_entry_name):
+    """Manually void a Payment in QB"""
+    try:
+        pe = frappe.get_doc("Payment Entry", payment_entry_name)
+        from quickbooks_connector.qb_payment_hooks import on_payment_entry_cancel
+        on_payment_entry_cancel(pe)
+        return {"success": True, "message": "Payment voided successfully"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
