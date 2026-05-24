@@ -240,13 +240,16 @@ def create_qb_vendor_credit_from_return(doc):
 
         lines = []
         for row in doc.items:
+            amount = abs(float(row.amount or 0))
+            if amount <= 0:
+                continue  # Zero amount lines skip karo
             lines.append({
                 "DetailType": "AccountBasedExpenseLineDetail",
-                "Amount": abs(float(row.amount or 0)),
-                "Description": f"{row.item_code}: {row.description or row.item_name or ''}",
+                "Amount": amount,
+                "Description": str(row.item_code),
                 "AccountBasedExpenseLineDetail": {
                     "AccountRef": {"value": qb_account_id},
-                    "TaxCodeRef": {"value": tax_code_id}
+                    "TaxCodeRef": {"value": "12"}  # No VAT hardcode
                 }
             })
 
@@ -260,10 +263,7 @@ def create_qb_vendor_credit_from_return(doc):
             "Line": lines
         }
 
-        if invoice_tax_rate > 0:
-            payload["GlobalTaxCalculation"] = "TaxExcluded"
-        else:
-            payload["GlobalTaxCalculation"] = "NotApplicable"
+        payload["GlobalTaxCalculation"] = "NotApplicable"
 
         if getattr(doc, "due_date", None):
             payload["DueDate"] = str(doc.due_date)
