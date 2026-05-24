@@ -3594,14 +3594,81 @@ def manual_create_credit_memo(sales_invoice_name):
 def manual_create_vendor_credit(purchase_invoice_name):
     """Manually create Vendor Credit in QB for a return Purchase Invoice"""
     try:
+        import requests
+        
         pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
+        
         if not pi.is_return:
             return {"success": False, "error": "This is not a return invoice"}
+
+        settings = get_settings()
+        access_token = get_valid_access_token()
+
+        qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
+        if not qb_vendor_id:
+            return {"success": False, "error": f"Supplier '{pi.supplier}' missing QB ID"}
+
+        qb_account_id = frappe.db.get_value(
+            "Account",
+            [
+                ["company", "=", settings.company],
+                ["quickbooks_id", "!=", ""],
+                ["quickbooks_id", "!=", None],
+                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
+            ],
+            "quickbooks_id"
+        ) or "69"
+
+        lines = []
+        for row in pi.items:
+            amount = abs(float(row.amount or 0))
+            if amount <= 0:
+                continue
+            lines.append({
+                "DetailType": "AccountBasedExpenseLineDetail",
+                "Amount": amount,
+                "Description": str(row.item_code),
+                "AccountBasedExpenseLineDetail": {
+                    "AccountRef": {"value": str(qb_account_id)},
+                    "TaxCodeRef": {"value": "12"}
+                }
+            })
+
+        if not lines:
+            return {"success": False, "error": "No valid lines found"}
+
+        payload = {
+            "VendorRef": {"value": str(qb_vendor_id)},
+            "TxnDate": str(pi.posting_date),
+            "Line": lines,
+            "GlobalTaxCalculation": "NotApplicable"
+        }
+
+        url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/vendorcredit?minorversion=65"
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
         
-        from quickbooks_connector.qb_purchase_hooks import create_qb_vendor_credit_from_return
-        pi.quickbooks_id = None
-        create_qb_vendor_credit_from_return(pi)
-        return {"success": True, "message": "Vendor Credit created successfully"}
+        if response.status_code != 200:
+            return {"success": False, "error": f"QB Error: {response.text}"}
+
+        data = response.json()
+        vendor_credit_id = data.get("VendorCredit", {}).get("Id")
+
+        if not vendor_credit_id:
+            return {"success": False, "error": f"No ID in response: {data}"}
+
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_id", vendor_credit_id)
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_sync_status", "Synced")
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_last_sync", frappe.utils.now_datetime())
+
+        return {"success": True, "message": f"Vendor Credit created. ID: {vendor_credit_id}", "id": vendor_credit_id}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
