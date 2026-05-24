@@ -3628,3 +3628,68 @@ def manual_void_payment(payment_entry_name):
         return {"success": True, "message": "Payment voided successfully"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+
+@frappe.whitelist()
+def test_vendor_credit_debug(purchase_invoice_name):
+    """Debug vendor credit creation"""
+    try:
+        from quickbooks_connector.api import get_valid_access_token, get_settings
+        import requests
+
+        settings = get_settings()
+        access_token = get_valid_access_token()
+        pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
+
+        qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
+
+        # Find expense account
+        qb_account_id = frappe.db.get_value(
+            "Account",
+            [
+                ["company", "=", settings.company],
+                ["quickbooks_id", "!=", ""],
+                ["quickbooks_id", "!=", None],
+                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
+            ],
+            "quickbooks_id"
+        ) or "69"
+
+        lines = []
+        for row in pi.items:
+            lines.append({
+                "DetailType": "AccountBasedExpenseLineDetail",
+                "Amount": abs(float(row.amount or 0)),
+                "Description": str(row.item_code),
+                "AccountBasedExpenseLineDetail": {
+                    "AccountRef": {"value": str(qb_account_id)},
+                    "TaxCodeRef": {"value": "12"}
+                }
+            })
+
+        payload = {
+            "VendorRef": {"value": str(qb_vendor_id)},
+            "TxnDate": str(pi.posting_date),
+            "Line": lines,
+            "GlobalTaxCalculation": "NotApplicable"
+        }
+
+        url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/vendorcredit?minorversion=65"
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+        return {
+            "status": response.status_code,
+            "payload": payload,
+            "response": response.text,
+            "vendor_id": qb_vendor_id,
+            "account_id": qb_account_id
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
