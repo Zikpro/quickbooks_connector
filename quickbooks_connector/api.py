@@ -3689,10 +3689,95 @@ def manual_void_bill(purchase_invoice_name):
 def manual_void_payment(payment_entry_name):
     """Manually void a Payment in QB"""
     try:
+        import requests
+
         pe = frappe.get_doc("Payment Entry", payment_entry_name)
-        from quickbooks_connector.qb_payment_hooks import on_payment_entry_cancel
-        on_payment_entry_cancel(pe)
-        return {"success": True, "message": "Payment voided successfully"}
+        settings = get_settings()
+        access_token = get_valid_access_token()
+
+        qb_payment_id = getattr(pe, "quickbooks_payment_id", None)
+        qb_bill_payment_id = getattr(pe, "quickbooks_bill_payment_id", None)
+
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+
+        base_url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}"
+
+        if qb_payment_id:
+            # Fetch SyncToken
+            r = requests.get(
+                f"{base_url}/payment/{qb_payment_id}?minorversion=65",
+                headers=headers
+            )
+            payment_data = r.json().get("Payment", {})
+            sync_token = payment_data.get("SyncToken")
+
+            if not sync_token:
+                return {"success": False, "error": f"No SyncToken for Payment ID: {qb_payment_id}"}
+
+            # Void using sparse update
+            payload = {
+                "Id": str(qb_payment_id),
+                "SyncToken": str(sync_token),
+                "sparse": True,
+                "TotalAmt": 0
+            }
+
+            response = requests.post(
+                f"{base_url}/payment?minorversion=65&operation=void",
+                headers=headers,
+                json={"Id": str(qb_payment_id), "SyncToken": str(sync_token), "sparse": True}
+            )
+
+            if response.status_code != 200:
+                # Try alternative void method
+                response = requests.post(
+                    f"{base_url}/payment?minorversion=65",
+                    headers=headers,
+                    json={
+                        "Id": str(qb_payment_id),
+                        "SyncToken": str(sync_token),
+                        "TotalAmt": 0,
+                        "Line": [],
+                        "sparse": True
+                    }
+                )
+
+            if response.status_code != 200:
+                return {"success": False, "error": f"QB Error: {response.text}"}
+
+            frappe.db.set_value("Payment Entry", payment_entry_name, "quickbooks_payment_id", "")
+            return {"success": True, "message": f"Payment {qb_payment_id} voided successfully"}
+
+        elif qb_bill_payment_id:
+            # Fetch SyncToken
+            r = requests.get(
+                f"{base_url}/billpayment/{qb_bill_payment_id}?minorversion=65",
+                headers=headers
+            )
+            bill_payment_data = r.json().get("BillPayment", {})
+            sync_token = bill_payment_data.get("SyncToken")
+
+            if not sync_token:
+                return {"success": False, "error": f"No SyncToken for Bill Payment ID: {qb_bill_payment_id}"}
+
+            response = requests.post(
+                f"{base_url}/billpayment?minorversion=65&operation=void",
+                headers=headers,
+                json={"Id": str(qb_bill_payment_id), "SyncToken": str(sync_token), "sparse": True}
+            )
+
+            if response.status_code != 200:
+                return {"success": False, "error": f"QB Error: {response.text}"}
+
+            frappe.db.set_value("Payment Entry", payment_entry_name, "quickbooks_bill_payment_id", "")
+            return {"success": True, "message": f"Bill Payment {qb_bill_payment_id} voided successfully"}
+
+        return {"success": False, "error": "No QB Payment ID found"}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
