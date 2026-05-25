@@ -3863,3 +3863,95 @@ def manual_amend_invoice(sales_invoice_name):
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@frappe.whitelist()
+def manual_amend_bill(purchase_invoice_name):
+    """Manually update QB Bill for amended Purchase Invoice"""
+    try:
+        import requests
+
+        pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
+
+        if not pi.amended_from:
+            return {"success": False, "error": "This is not an amended invoice"}
+
+        settings = get_settings()
+        access_token = get_valid_access_token()
+
+        original_qb_id = frappe.db.get_value("Purchase Invoice", pi.amended_from, "quickbooks_id")
+        if not original_qb_id:
+            return {"success": False, "error": f"Original invoice '{pi.amended_from}' has no QB ID"}
+
+        # Fetch SyncToken
+        url_get = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/bill/{original_qb_id}?minorversion=65"
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+        r = requests.get(url_get, headers=headers)
+        bill_data = r.json().get("Bill", {})
+        sync_token = bill_data.get("SyncToken")
+
+        if not sync_token:
+            return {"success": False, "error": f"No SyncToken for QB Bill: {original_qb_id}. Bill may be voided."}
+
+        qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
+        if not qb_vendor_id:
+            return {"success": False, "error": f"Supplier '{pi.supplier}' missing QB ID"}
+
+        qb_account_id = frappe.db.get_value(
+            "Account",
+            [
+                ["company", "=", settings.company],
+                ["quickbooks_id", "!=", ""],
+                ["quickbooks_id", "!=", None],
+                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
+            ],
+            "quickbooks_id"
+        ) or "69"
+
+        lines = []
+        for row in pi.items:
+            amount = float(row.amount or 0)
+            if amount <= 0:
+                continue
+            lines.append({
+                "DetailType": "AccountBasedExpenseLineDetail",
+                "Amount": amount,
+                "Description": str(row.item_code),
+                "AccountBasedExpenseLineDetail": {
+                    "AccountRef": {"value": str(qb_account_id)},
+                    "TaxCodeRef": {"value": "12"}
+                }
+            })
+
+        payload = {
+            "Id": str(original_qb_id),
+            "SyncToken": str(sync_token),
+            "VendorRef": {"value": str(qb_vendor_id)},
+            "TxnDate": str(pi.posting_date),
+            "Line": lines,
+            "sparse": True,
+            "GlobalTaxCalculation": "NotApplicable"
+        }
+
+        if getattr(pi, "due_date", None):
+            payload["DueDate"] = str(pi.due_date)
+
+        url_update = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/bill?minorversion=65"
+        response = requests.post(url_update, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return {"success": False, "error": f"QB Error: {response.text}"}
+
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_id", original_qb_id)
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_sync_status", "Synced")
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Purchase Invoice", purchase_invoice_name, "quickbooks_last_sync", frappe.utils.now_datetime())
+
+        return {"success": True, "message": f"QB Bill {original_qb_id} updated successfully"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
