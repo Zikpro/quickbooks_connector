@@ -3576,16 +3576,84 @@ def test_void_bill(bill_id):
 def manual_create_credit_memo(sales_invoice_name):
     """Manually create Credit Memo in QB for a return Sales Invoice"""
     try:
+        import requests
+
         si = frappe.get_doc("Sales Invoice", sales_invoice_name)
+
         if not si.is_return:
             return {"success": False, "error": "This is not a return invoice"}
-        
-        from quickbooks_connector.qb_invoice_hooks import create_qb_credit_memo_from_return
-        # Temporarily clear QB ID to allow processing
-        original_qb_id = si.quickbooks_id
-        si.quickbooks_id = None
-        create_qb_credit_memo_from_return(si)
-        return {"success": True, "message": "Credit Memo created successfully"}
+
+        settings = get_settings()
+        access_token = get_valid_access_token()
+
+        qb_customer_id = frappe.db.get_value("Customer", si.customer, "quickbooks_id")
+        if not qb_customer_id:
+            return {"success": False, "error": f"Customer '{si.customer}' missing QB ID"}
+
+        default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
+
+        def get_qb_tax_code(tax_rate):
+            rate = float(tax_rate or 0)
+            if rate >= 20: return "3"
+            elif rate >= 5: return "8"
+            elif rate > 0: return "10"
+            return default_tax_code
+
+        invoice_tax_rate = 0
+        if si.taxes:
+            for tax in si.taxes:
+                if float(tax.rate or 0) > 0:
+                    invoice_tax_rate = float(tax.rate)
+                    break
+
+        lines = []
+        for row in si.items:
+            qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
+            if not qb_item_id:
+                return {"success": False, "error": f"Item '{row.item_code}' missing QB ID"}
+            lines.append({
+                "DetailType": "SalesItemLineDetail",
+                "Amount": abs(float(row.amount)),
+                "Description": row.description or row.item_name or row.item_code,
+                "SalesItemLineDetail": {
+                    "ItemRef": {"value": str(qb_item_id)},
+                    "Qty": abs(float(row.qty)),
+                    "UnitPrice": float(row.rate),
+                    "TaxCodeRef": {"value": get_qb_tax_code(invoice_tax_rate)}
+                }
+            })
+
+        payload = {
+            "CustomerRef": {"value": str(qb_customer_id)},
+            "DocNumber": str(si.name),
+            "TxnDate": str(si.posting_date),
+            "Line": lines,
+            "GlobalTaxCalculation": "TaxExcluded" if invoice_tax_rate > 0 else "NotApplicable"
+        }
+
+        url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/creditmemo?minorversion=65"
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            return {"success": False, "error": f"QB Error: {response.text}"}
+
+        credit_memo_id = response.json().get("CreditMemo", {}).get("Id")
+        if not credit_memo_id:
+            return {"success": False, "error": "No ID in response"}
+
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_id", credit_memo_id)
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_status", "Synced")
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_last_sync", frappe.utils.now_datetime())
+
+        return {"success": True, "message": f"Credit Memo created in QB. ID: {credit_memo_id}"}
+
     except Exception as e:
         return {"success": False, "error": str(e)}
 
