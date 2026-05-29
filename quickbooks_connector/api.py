@@ -3992,8 +3992,7 @@ def manual_amend_invoice(sales_invoice_name):
             "CustomerRef": {"value": str(qb_customer_id)},
             "TxnDate": str(si.posting_date),
             "DueDate": str(si.due_date),
-            "Line": lines,
-            "sparse": True
+            "Line": lines
         }
 
         if invoice_tax_rate > 0:
