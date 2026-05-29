@@ -4085,7 +4085,6 @@ def manual_amend_bill(purchase_invoice_name):
             "VendorRef": {"value": str(qb_vendor_id)},
             "TxnDate": str(pi.posting_date),
             "Line": lines,
-            "sparse": True,
             "GlobalTaxCalculation": "NotApplicable"
         }
 
