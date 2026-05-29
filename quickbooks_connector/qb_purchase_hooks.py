@@ -19,18 +19,22 @@ def on_purchase_invoice_submit(doc, method=None):
 
 
 def on_purchase_invoice_cancel(doc, method=None):
-    """Void Purchase Invoice Bill in QB when cancelled"""
+    """Void Purchase Invoice Bill in QB when cancelled — non-blocking"""
     try:
         settings = get_settings()
         if not settings.is_connected:
             return
         if not doc.quickbooks_id:
             return
-        from quickbooks_connector.api import manual_void_bill
-        result = manual_void_bill(doc.name)
-        if not result.get("success"):
-            frappe.log_error("QB Bill Void Error", f"{doc.name}: {result.get('error')}")
+        # Background mein void karo taake cancel block na ho
+        frappe.enqueue(
+            "quickbooks_connector.api.manual_void_bill",
+            queue="short",
+            purchase_invoice_name=doc.name,
+            now=False
+        )
     except Exception as e:
+        # Error ko silently log karo — cancel block nahi hona chahiye
         frappe.log_error("QB Bill Void Error", f"{doc.name}: {str(e)}")
 
 
