@@ -19,19 +19,50 @@ def on_purchase_invoice_submit(doc, method=None):
 
 
 def on_purchase_invoice_cancel(doc, method=None):
-    """Void Purchase Invoice Bill in QB when cancelled"""
+    """Void Purchase Invoice Bill in QB — never blocks cancel"""
+    # QB void ko completely separate try/except mein rakho
+    # Taake koi bhi QB error ERP cancel ko block na kare
     try:
         settings = get_settings()
         if not settings.is_connected:
             return
         if not doc.quickbooks_id:
             return
-        from quickbooks_connector.api import manual_void_bill
-        result = manual_void_bill(doc.name)
-        if not result.get("success"):
-            frappe.log_error("QB Bill Void Error", f"{doc.name}: {result.get('error')}")
-    except Exception as e:
-        frappe.log_error("QB Bill Void Error", f"{doc.name}: {str(e)}")
+        
+        from quickbooks_connector.api import QuickBooksAPI
+        api = QuickBooksAPI()
+        
+        qb_response = api.make_request(
+            f"bill/{doc.quickbooks_id}",
+            params={"minorversion": 65}
+        )
+        bill_data = qb_response.get("Bill", {})
+        sync_token = bill_data.get("SyncToken")
+        
+        if not sync_token:
+            frappe.log_error("QB Bill Void", f"No SyncToken for {doc.quickbooks_id}")
+            return
+            
+        api.make_request(
+            "bill",
+            method="POST",
+            data={
+                "Id": str(doc.quickbooks_id),
+                "SyncToken": str(sync_token),
+                "sparse": True
+            },
+            params={"minorversion": 65, "operation": "void"}
+        )
+        
+        frappe.db.set_value("Purchase Invoice", doc.name, "quickbooks_sync_status", "Voided")
+        frappe.db.commit()
+        
+    except Exception:
+        # Koi bhi error — silently log karo, cancel kabhi block nahi hoga
+        frappe.log_error(
+            "QB Bill Void Error",
+            f"PI: {doc.name}, QB ID: {doc.quickbooks_id}"
+        )
 
 
 def on_purchase_invoice_amend(doc, method=None):
