@@ -31,7 +31,7 @@ frappe.ui.form.on("Sales Invoice", {
                     }, __("QuickBooks"));
 
                 } else {
-                    // Already synced — show status
+                 
                     frm.add_custom_button(__("Credit Memo Synced ✓"), function() {
                         frappe.msgprint({
                             title: __("Already Synced"),

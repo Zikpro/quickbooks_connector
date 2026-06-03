@@ -57,7 +57,6 @@ def get_authorization_url():
             if not getattr(settings, field, None):
                 frappe.throw(_(f"{field.replace('_', ' ').title()} is required"))
 
-        # Scopes for QuickBooks API
         scopes = [
             "com.intuit.quickbooks.accounting",
             "openid",
@@ -67,10 +66,9 @@ def get_authorization_url():
             "address"
         ]
 
-        # Generate state parameter for security
+      
         state = secrets.token_urlsafe(16)
 
-        # Store state for verification with timestamp
         state_data = {
             "timestamp": now_datetime(),
             "redirect_uri": settings.redirect_uri
@@ -81,7 +79,7 @@ def get_authorization_url():
             expires_in_sec=STATE_TIMEOUT
         )
 
-        # Build authorization URL
+        
         params = {
             'client_id': settings.client_id,
             'response_type': 'code',
@@ -93,7 +91,7 @@ def get_authorization_url():
         auth_url = settings.authorization_endpoint or "https://appcenter.intuit.com/connect/oauth2"
         authorization_url = f"{auth_url}?{urlencode(params)}"
 
-        # Safe logging
+   
         frappe.logger().debug(
             f"QuickBooks Auth URL generated with state: {state}"
         )
@@ -118,7 +116,7 @@ def get_authorization_url():
 def oauth_callback(code=None, state=None, realmId=None, error=None):
     """Handle OAuth 2.0 callback from QuickBooks"""
     
-    # Switch to Administrator for this callback
+
     frappe.set_user("Administrator")
     
     try:
@@ -175,7 +173,7 @@ def exchange_code_for_tokens(code, settings):
     try:
         token_url = settings.token_endpoint
         
-        # Get client secret safely
+     
         client_secret = settings.get_password('client_secret')
         if not client_secret:
             frappe.throw(_("Client secret not found in settings"))
@@ -200,7 +198,7 @@ def exchange_code_for_tokens(code, settings):
         
         token_data = response.json()
         
-        # Validate required token fields
+      
         required_token_fields = ['access_token', 'refresh_token', 'expires_in']
         for field in required_token_fields:
             if field not in token_data:
@@ -224,7 +222,7 @@ def exchange_code_for_tokens(code, settings):
 def save_tokens(settings, token_data, realm_id=None):
     """Save tokens to settings"""
     try:
-        # Fallback: store directly (not encrypted)
+      
         settings.access_token = token_data.get("access_token")
         settings.refresh_token = token_data.get("refresh_token")
         
@@ -270,7 +268,7 @@ def refresh_tokens():
                 "error": "No refresh token available"
             }
 
-        # Get client secret safely
+    
         client_secret = settings.get_password('client_secret')
         refresh_token = settings.get_password('refresh_token')
         
@@ -325,12 +323,12 @@ def get_valid_access_token():
         if not settings.access_token:
             frappe.throw(_("Not connected to QuickBooks"))
 
-        # Check expiry
+        
         if settings.token_expiry:
             expiry_time = get_datetime(settings.token_expiry)
             current_time = now_datetime()
             
-            # Refresh if expired or about to expire
+            
             if current_time >= expiry_time:
                 refresh_result = refresh_tokens()
                 if not refresh_result.get("success"):
@@ -424,8 +422,7 @@ class QuickBooksAPI:
         query = f"SELECT * FROM Bill STARTPOSITION {start_position} MAXRESULTS {max_results}"
         return self.make_request(f'query?query={quote(query)}')
 
-    # Add this method to QuickBooksAPI class
-    # Add it after the get_vendors method in the QuickBooksAPI class
+   
 
     def get_bill_payments(self, start_position=1, max_results=1000):
         """Get bill payments from QuickBooks"""
@@ -553,7 +550,7 @@ def disconnect():
     try:
         settings = get_settings()
         
-        # Clear all connection data
+       
         settings.access_token = ""
         settings.refresh_token = ""
         settings.realm_id_company_id = ""
@@ -592,39 +589,37 @@ def sync_all():
             "items": {"success": False},
             "suppliers": {"success": False},
             "payments": {"success": False},
-            "bill_payments": {"success": False}  # Add this
+            "bill_payments": {"success": False}
         }
 
-        # Sync accounts if enabled
+    
         if getattr(settings, 'sync_accounts', True):
             results["accounts"] = sync_accounts()
 
-        # Sync customers if enabled
+        
         if getattr(settings, 'sync_customers', False):
             results["customers"] = sync_customers()
 
-        # Sync items if enabled
         if getattr(settings, 'sync_items', False):
             results["items"] = sync_items()
 
-        # Sync suppliers if enabled
+    
         if getattr(settings, 'sync_suppliers', False):
             results["suppliers"] = sync_suppliers()
 
-        # Sync payments (customer payments) if enabled
         if getattr(settings, 'sync_payments', True):
             results["payments"] = sync_payments()
 
-        # Sync bill payments if enabled
+        
         if getattr(settings, 'sync_bill_payments', True):
             results["bill_payments"] = sync_bill_payments()
 
-        # Update last sync timestamp
+
         settings.last_sync = now_datetime()
         settings.save()
         frappe.db.commit()
 
-        # Check if all syncs were successful
+      
         all_success = all(
             result.get("success", False) for result in results.values()
             if isinstance(result, dict)
@@ -668,7 +663,7 @@ def sync_with_pagination(api_method, process_func, entity_name):
         total_processed = 0
 
         while True:
-            # Get batch of data
+         
             response = api_method(start_position, max_results)
             query_response = response.get('QueryResponse', {})
             entities = query_response.get(entity_name, [])
@@ -676,13 +671,12 @@ def sync_with_pagination(api_method, process_func, entity_name):
             if not entities:
                 break
 
-            # Process batch
+ 
             created, updated = process_func(entities)
             total_created += created
             total_updated += updated
             total_processed += len(entities)
 
-            # Check if there are more records
             if len(entities) < max_results:
                 break
 
@@ -763,21 +757,19 @@ def create_or_update_customer(qb_customer):
         
         
 
-        # Check if exists
+      
         existing = frappe.db.get_value(
             "Customer",
             {"quickbooks_id": customer_id},
             ["name", "customer_name"]
         )
 
-        # Prepare customer data
-        # Customer group — use existing one if default not found
+     
         customer_group = DEFAULT_CUSTOMER_GROUP
         if not frappe.db.exists("Customer Group", customer_group):
             customer_group = frappe.db.get_value("Customer Group", 
                 {"is_group": 0}, "name") or "All Customer Groups"
 
-        # Territory — use existing one if default not found  
         territory = DEFAULT_TERRITORY
         if not frappe.db.exists("Territory", territory):
             territory = frappe.db.get_value("Territory", 
@@ -793,7 +785,7 @@ def create_or_update_customer(qb_customer):
             "custom_company": settings.company         
         }
 
-        # Add contact info
+      
         primary_email = qb_customer.get('PrimaryEmailAddr', {})
         if primary_email.get('Address'):
             customer_data["email_id"] = primary_email.get('Address')
@@ -816,13 +808,13 @@ def create_or_update_customer(qb_customer):
                     customer_data[erp_field] = billing_address.get(qb_field)
 
         if existing:
-            # Update existing customer
+        
             customer = frappe.get_doc("Customer", existing[0])
             customer.update(customer_data)
             customer.save(ignore_permissions=True)
             return "updated"
         else:
-            # Create new customer
+        
             customer = frappe.get_doc({
                 "doctype": "Customer",
                 **customer_data
@@ -1010,36 +1002,35 @@ def create_qb_invoice_from_sales_invoice(si):
     - Save QB Invoice ID back on ERPNext Sales Invoice
     """
 
-    # Prevent duplicates
     if getattr(si, "quickbooks_id", None):
         return {"qb_invoice_id": si.quickbooks_id, "skipped": True}
 
     settings = get_settings()
     api = QuickBooksAPI()
 
-    # Ensure Customer has QB ID
+
     qb_customer_id = frappe.db.get_value("Customer", si.customer, "quickbooks_id")
     if not qb_customer_id:
         msg = f"Customer '{si.customer}' does not have QuickBooks ID. Sync customers first."
         _mark_sales_invoice_sync_error(si, msg)
         frappe.throw(_(msg))
 
-    # Default tax code from settings (fallback: 12 = No VAT)
+
     default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
 
-    # UK VAT rate to QB Tax Code ID - automatic mapping
+
     def get_qb_tax_code(tax_rate):
         rate = float(tax_rate or 0)
         if rate >= 20:
-            return "3"    # 20.0% S - Standard VAT
+            return "3"   
         elif rate >= 5:
-            return "8"    # 5.0% R - Reduced VAT
+            return "8"   
         elif rate > 0:
-            return "10"   # 0.0% Z - Zero Rated
+            return "10"   
         else:
-            return default_tax_code  # No VAT
+            return default_tax_code 
 
-    # Get invoice level tax rate
+    
     invoice_tax_rate = 0
     if si.taxes:
         for tax in si.taxes:
@@ -1047,7 +1038,7 @@ def create_qb_invoice_from_sales_invoice(si):
                 invoice_tax_rate = float(tax.rate)
                 break
 
-    # Build invoice lines
+    
     lines = []
     for row in si.items:
         qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
@@ -1078,7 +1069,6 @@ def create_qb_invoice_from_sales_invoice(si):
 
     doc_number = si.name
 
-    # Build payload
     payload = {
         "CustomerRef": {"value": str(qb_customer_id)},
         "DocNumber": str(si.name),
@@ -1087,7 +1077,6 @@ def create_qb_invoice_from_sales_invoice(si):
         "Line": lines
     }
 
-    # Billing Address add karo
     if si.customer_address:
         try:
             addr = frappe.get_doc("Address", si.customer_address)
@@ -1109,19 +1098,18 @@ def create_qb_invoice_from_sales_invoice(si):
         except Exception:
             pass
 
-    # Customer Email add karo
-    # Customer Email add karo
+
     try:
         customer_email = None
-        # 1. Pehle Address doc se email lo
+        
         if si.customer_address:
             customer_email = frappe.db.get_value(
                 "Address", si.customer_address, "email_id"
             )
-        # 2. Phir contact email
+
         if not customer_email and getattr(si, 'contact_email', None):
             customer_email = si.contact_email
-        # 3. Last resort — Customer ki email
+    
         if not customer_email:
             customer_email = frappe.db.get_value(
                 "Customer", si.customer, "email_id"
@@ -1131,7 +1119,6 @@ def create_qb_invoice_from_sales_invoice(si):
     except Exception:
         pass
 
-    # Payment Terms add karo - case insensitive match
     if si.payment_terms_template:
         try:
             terms_response = api.make_request(
@@ -1143,15 +1130,13 @@ def create_qb_invoice_from_sales_invoice(si):
             matched_term = None
             for term in terms_list:
                 qb_term_name = term.get('Name', '').lower().strip()
-                # Exact match
+    
                 if qb_term_name == template_name:
                     matched_term = term
                     break
-                # Partial match — "net 30" matches "NET 30"
                 if template_name.replace(' ', '') == qb_term_name.replace(' ', ''):
                     matched_term = term
                     break
-                # Number match — "30 days term" aur "net 30" dono mein "30" hai
                 import re
                 erp_numbers = re.findall(r'\d+', template_name)
                 qb_numbers = re.findall(r'\d+', qb_term_name)
@@ -1168,7 +1153,6 @@ def create_qb_invoice_from_sales_invoice(si):
     # -------------------------------
     # TAX HANDLING (QB UK FORMAT)
     # QB automatically calculates VAT based on TaxCodeRef in line items
-    # We just set GlobalTaxCalculation
     # -------------------------------
     if invoice_tax_rate > 0:
         payload["GlobalTaxCalculation"] = "TaxExcluded"
@@ -1189,7 +1173,7 @@ def create_qb_invoice_from_sales_invoice(si):
         _mark_sales_invoice_sync_error(si, msg)
         frappe.throw(_(msg))
 
-    # Save mapping back to ERPNext Sales Invoice
+
     si.db_set("quickbooks_id", qb_invoice_id)
     si.db_set("quickbooks_doc_number", doc_number)
     si.db_set("quickbooks_last_sync", now_datetime())
@@ -1242,14 +1226,13 @@ def create_qb_bill_from_purchase_invoice(pi):
     With UK VAT tax handling
     """
 
-    # Prevent duplicates
     if getattr(pi, "quickbooks_id", None):
         return {"qb_bill_id": pi.quickbooks_id, "skipped": True}
 
     settings = get_settings()
     api = QuickBooksAPI()
 
-    # Ensure Supplier has QB ID
+
     qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
     if not qb_vendor_id:
         msg = f"Supplier '{pi.supplier}' does not have QuickBooks ID. Sync suppliers first."
@@ -1258,22 +1241,20 @@ def create_qb_bill_from_purchase_invoice(pi):
 
     frappe.logger().info(f"Supplier: {pi.supplier}, QB Vendor ID: {qb_vendor_id}")
 
-    # Default tax code from settings (fallback: 12 = No VAT)
     default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
 
-    # UK VAT rate to QB Tax Code ID - automatic mapping (Purchase side)
     def get_qb_tax_code(tax_rate):
         rate = float(tax_rate or 0)
         if rate >= 20:
-            return "3"    # 20.0% S - Standard VAT
+            return "3"   
         elif rate >= 5:
-            return "8"    # 5.0% R - Reduced VAT
+            return "8"   
         elif rate > 0:
-            return "10"   # 0.0% Z - Zero Rated
+            return "10"  
         else:
-            return default_tax_code  # No VAT
+            return default_tax_code  
 
-    # Get invoice level tax rate
+
     invoice_tax_rate = 0
     if pi.taxes:
         for tax in pi.taxes:
@@ -1281,7 +1262,7 @@ def create_qb_bill_from_purchase_invoice(pi):
                 invoice_tax_rate = float(tax.rate)
                 break
 
-    # Find a QB expense account
+    
     qb_account_id = frappe.db.get_value(
         "Account",
         [
@@ -1293,17 +1274,16 @@ def create_qb_bill_from_purchase_invoice(pi):
         "quickbooks_id"
     )
 
-    # Fallback hardcoded expense account
+
     if not qb_account_id:
-        qb_account_id = "69"
-        frappe.logger().warning(f"Using hardcoded QB expense account ID: {qb_account_id}")
+        frappe.throw(_("No expense account mapped to QuickBooks. Please sync accounts first via Quickbooks Setting → Sync Accounts."))
 
     frappe.logger().info(f"Using QB account ID: {qb_account_id} for purchase invoice {pi.name}")
 
-    # Tax code for lines
+    
     tax_code_id = get_qb_tax_code(invoice_tax_rate)
 
-    # Build bill lines with TaxCodeRef
+
     lines = []
     for idx, row in enumerate(pi.items):
         line = {
@@ -1326,7 +1306,7 @@ def create_qb_bill_from_purchase_invoice(pi):
         _mark_purchase_invoice_sync_error(pi, msg)
         frappe.throw(_(msg))
 
-    # Build payload
+    
     payload = {
         "VendorRef": {
             "value": qb_vendor_id
@@ -1344,7 +1324,7 @@ def create_qb_bill_from_purchase_invoice(pi):
     else:
         payload["GlobalTaxCalculation"] = "NotApplicable"
 
-    # Add optional fields
+    
     if pi.name:
         payload["DocNumber"] = pi.name
 
@@ -1365,7 +1345,7 @@ def create_qb_bill_from_purchase_invoice(pi):
             _mark_purchase_invoice_sync_error(pi, msg)
             frappe.throw(_(msg))
 
-        # Mark as successfully synced
+        
         _mark_purchase_invoice_sync_success(pi, qb_bill_id, pi.name)
 
         log_action(
@@ -1397,7 +1377,7 @@ def create_qb_bill_from_purchase_invoice(pi):
                     error_details = errors[0].get("Message", "Unknown error")
                     frappe.logger().error(f"QB Error: {error_details}")
                     frappe.logger().error(f"Full Error: {e.response.text}")
-        except:
+        except Exception:
             error_details = str(e)
 
         msg = f"QuickBooks API Error: {error_details}"
@@ -1409,83 +1389,7 @@ def create_qb_bill_from_purchase_invoice(pi):
         _mark_purchase_invoice_sync_error(pi, error_msg)
         frappe.throw(_(error_msg))
 
-@frappe.whitelist()
-def test_bill_creation(purchase_invoice_name=None):
-    """Test bill creation with minimal payload - FIXED VERSION"""
-    try:
-        settings = get_settings()
-        if not settings.is_connected:
-            return {"success": False, "error": "Not connected to QuickBooks"}
 
-        api = QuickBooksAPI()
-        
-        # Get a known vendor ID
-        vendors = frappe.get_all(
-            "Supplier",
-            filters={"quickbooks_id": ["!=", ""]},
-            fields=["name", "quickbooks_id"],
-            limit=1
-        )
-        
-        if not vendors:
-            return {"success": False, "error": "No suppliers with QuickBooks ID found"}
-        
-        vendor_id = vendors[0].quickbooks_id
-        
-        # Get a known expense account ID - SIMPLIFIED
-        expense_accounts = frappe.get_all(
-            "Account",
-            filters=[
-                ["quickbooks_id", "!=", ""],
-                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
-            ],
-            fields=["quickbooks_id", "account_name"],
-            limit=1
-        )
-        
-        if not expense_accounts:
-            # Use hardcoded "Accounting" account ID 69 from your QB
-            account_id = "69"
-            account_name = "Accounting (hardcoded)"
-        else:
-            account_id = expense_accounts[0].quickbooks_id
-            account_name = expense_accounts[0].account_name
-        
-        # Simple test payload
-        test_payload = {
-            "VendorRef": {
-                "value": vendor_id
-            },
-            "TxnDate": getdate(now_datetime()).strftime('%Y-%m-%d'),
-            "Line": [
-                {
-                    "DetailType": "AccountBasedExpenseLineDetail",
-                    "Amount": 100.00,
-                    "Description": "Test bill from ERPNext",
-                    "AccountBasedExpenseLineDetail": {
-                        "AccountRef": {
-                            "value": account_id
-                        }
-                    }
-                }
-            ]
-        }
-        
-        frappe.logger().info(f"Test Bill Payload: {frappe.as_json(test_payload)}")
-        
-        response = api.make_request("bill", method="POST", data=test_payload, params={"minorversion": 65})
-        
-        return {
-            "success": True,
-            "response": response,
-            "payload": test_payload,
-            "message": f"Test bill created successfully using vendor {vendor_id} and account {account_name} (ID: {account_id})"
-        }
-        
-    except Exception as e:
-        error_msg = str(e)
-        frappe.log_error("QuickBooks Bill Test Error", error_msg)
-        return {"success": False, "error": error_msg}
 
 def _mark_purchase_invoice_sync_success(pi, qb_bill_id=None, doc_number=None):
     """Mark purchase invoice as successfully synced - SAFE VERSION"""
@@ -1495,12 +1399,12 @@ def _mark_purchase_invoice_sync_success(pi, qb_bill_id=None, doc_number=None):
             "quickbooks_sync_error": ""
         }
         
-        # Only add fields that exist
+    
         try:
             meta = frappe.get_meta("Purchase Invoice")
             if hasattr(meta, 'quickbooks_sync_status'):
                 update_fields["quickbooks_sync_status"] = "Synced"
-        except:
+        except Exception:
             pass
         
         if qb_bill_id:
@@ -1523,12 +1427,12 @@ def _mark_purchase_invoice_sync_error(pi, error_message: str):
             "quickbooks_sync_error": error_message
         }
         
-        # Only add fields that exist
+    
         try:
             meta = frappe.get_meta("Purchase Invoice")
             if hasattr(meta, 'quickbooks_sync_status'):
                 update_fields["quickbooks_sync_status"] = "Error"
-        except:
+        except Exception:
             pass
         
         frappe.db.set_value("Purchase Invoice", pi.name, update_fields)
@@ -1537,92 +1441,8 @@ def _mark_purchase_invoice_sync_error(pi, error_message: str):
         frappe.log_error("Mark Purchase Invoice Sync Error", str(e))
 
 
-@frappe.whitelist()
-def test_bill_api():
-    """Test QuickBooks Bill API with a simple payload"""
-    try:
-        settings = get_settings()
-        if not settings.is_connected:
-            return {"success": False, "error": "Not connected to QuickBooks"}
-
-        api = QuickBooksAPI()
-        
-        # Test with a simple payload first
-        test_payload = {
-            "VendorRef": {
-                "value": "1",  # Use a known vendor ID from your QB
-                "name": "Test Vendor"
-            },
-            "Line": [
-                {
-                    "DetailType": "AccountBasedExpenseLineDetail",
-                    "Amount": 100.00,
-                    "AccountBasedExpenseLineDetail": {
-                        "AccountRef": {
-                            "value": "1"  # Use a known expense account from QB
-                        }
-                    }
-                }
-            ]
-        }
-        
-        frappe.logger().debug(f"Test Bill Payload: {frappe.as_json(test_payload)}")
-        
-        response = api.make_request("bill", method="POST", data=test_payload, params={"minorversion": 65})
-        
-        return {
-            "success": True,
-            "response": response,
-            "message": "Bill API test successful"
-        }
-        
-    except Exception as e:
-        error_msg = str(e)
-        frappe.log_error("QuickBooks Bill API Test Error", error_msg)
-        return {"success": False, "error": error_msg}
     
 
-@frappe.whitelist()
-def debug_account_sync(limit=10):
-    """Debug function to see what accounts are being synced"""
-    try:
-        api = QuickBooksAPI()
-        
-        # Get a few accounts from QuickBooks
-        response = api.get_accounts(1, limit)
-        query_response = response.get('QueryResponse', {})
-        qb_accounts = query_response.get('Account', [])
-        
-        account_list = []
-        for acc in qb_accounts:
-            account_list.append({
-                "id": acc.get('Id'),
-                "name": acc.get('Name'),
-                "type": acc.get('AccountType'),
-                "subtype": acc.get('AccountSubType'),
-                "active": acc.get('Active', True)
-            })
-        
-        # Get ERPNext accounts for comparison
-        company = get_settings().company
-        erp_accounts = []
-        if company:
-            erp_accounts = frappe.get_all(
-                "Account",
-                filters={"company": company, "is_group": 0},
-                fields=["name", "account_name", "account_type", "quickbooks_id"],
-                limit=limit
-            )
-        
-        return {
-            "success": True,
-            "qb_accounts": account_list,
-            "erp_accounts": erp_accounts,
-            "company": company
-        }
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
 
 # ============ BULK PUSH FOR PURCHASE INVOICES ============
 
@@ -1639,11 +1459,11 @@ def bulk_push_purchase_invoices(invoice_names=None, force_sync=False):
                 "error": "Not connected to QuickBooks"
             }
 
-        # Handle string input
+
         if isinstance(invoice_names, str):
             try:
                 invoice_names = json.loads(invoice_names)
-            except:
+            except Exception:
                 if ',' in invoice_names:
                     invoice_names = [name.strip() for name in invoice_names.split(',') if name.strip()]
                 else:
@@ -1652,20 +1472,20 @@ def bulk_push_purchase_invoices(invoice_names=None, force_sync=False):
         if not isinstance(invoice_names, list):
             invoice_names = []
         
-        # If no invoice names provided, get all unsynced invoices
+        
         if not invoice_names:
             invoice_names = get_unsynced_purchase_invoices()
         
         if not invoice_names:
             return {
                 "success": True,
-                "message": "No unsynced purchase invoices found",
-                "success": 0,
+                "message": "No unsynced invoices found",
+                "synced": 0,
                 "skipped": 0,
                 "failed": 0
             }
 
-        # Process in batches
+        
         batch_size = 10
         batches = [invoice_names[i:i + batch_size] for i in range(0, len(invoice_names), batch_size)]
         
@@ -1717,12 +1537,12 @@ def bulk_push_purchase_invoices(invoice_names=None, force_sync=False):
                         message=f"Purchase Invoice {invoice_name}: {str(e)}"
                     )
             
-            # Small delay between batches
+    
             if batch_index < len(batches) - 1:
                 import time
                 time.sleep(1)
 
-        # Log the result
+    
         log_action(
             "Bulk Purchase Invoice Push Completed",
             {
@@ -1760,7 +1580,7 @@ def bulk_push_purchase_invoices(invoice_names=None, force_sync=False):
         return {
             "success": False,
             "error": error_msg,
-            "success": 0,
+            "synced": 0,
             "skipped": 0,
             "failed": 0
         }
@@ -1790,17 +1610,17 @@ def process_single_purchase_invoice_push(invoice_name, force_sync=False):
     Process single purchase invoice push with validation
     """
     try:
-        # Get invoice
+    
         pi = frappe.get_doc("Purchase Invoice", invoice_name)
         
-        # Skip if not submitted
+        
         if pi.docstatus != 1:
             return {
                 "status": "skipped",
                 "reason": "Invoice not submitted"
             }
         
-        # Skip if already synced and not forcing
+    
         if pi.quickbooks_id and not force_sync:
             return {
                 "status": "skipped", 
@@ -1808,14 +1628,14 @@ def process_single_purchase_invoice_push(invoice_name, force_sync=False):
                 "qb_id": pi.quickbooks_id
             }
         
-        # Validate required fields
+    
         if not pi.supplier:
             return {
                 "status": "failed",
                 "error": "Supplier not specified"
             }
         
-        # Check if supplier has QB ID
+    
         qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
         if not qb_vendor_id:
             return {
@@ -1823,7 +1643,7 @@ def process_single_purchase_invoice_push(invoice_name, force_sync=False):
                 "error": f"Supplier '{pi.supplier}' not synced to QuickBooks"
             }
         
-        # Check items have QB IDs
+
         for item in pi.items:
             qb_item_id = frappe.db.get_value("Item", item.item_code, "quickbooks_id")
             if not qb_item_id:
@@ -1832,7 +1652,7 @@ def process_single_purchase_invoice_push(invoice_name, force_sync=False):
                     "error": f"Item '{item.item_code}' not synced to QuickBooks"
                 }
         
-        # Push to QuickBooks
+        
         result = create_qb_bill_from_purchase_invoice(pi)
         
         if result.get("qb_bill_id"):
@@ -1856,7 +1676,6 @@ def process_single_purchase_invoice_push(invoice_name, force_sync=False):
 
 
 
-# Add this method to QuickBooksAPI class after other get_ methods
 
 @frappe.whitelist()
 def sync_accounts():
@@ -2014,9 +1833,9 @@ def sync_bill_payments():
         submitted = 0
         drafts = 0
         
-        # Get bill payments with pagination
+    
         start_position = 1
-        max_results = 500  # Reduced for better performance
+        max_results = 500 
         
         # Log start of sync
         log_action(
@@ -2045,10 +1864,8 @@ def sync_bill_payments():
                 try:
                     result = create_or_update_bill_payment_entry(qb_bill_payment)
                     
-                    # Check if payment entry was created and submitted
                     if result == "created":
                         created += 1
-                        # We'll check submission status in the log
                         
                     elif result == "skipped":
                         skipped += 1
@@ -2062,17 +1879,14 @@ def sync_bill_payments():
                         str(e)
                     )
             
-            # Check if there are more records
             if len(bill_payments) < max_results:
                 break
             
             start_position += max_results
             
-            # Small delay to avoid rate limiting
             import time
             time.sleep(1)
         
-        # Get stats on submitted vs draft payments
         recent_payments = frappe.get_all(
             "Payment Entry",
             filters={
@@ -2100,7 +1914,6 @@ def sync_bill_payments():
             entity_id=f"BILL_PAYMENTS_SYNC_{now_datetime().strftime('%Y%m%d_%H%M%S')}"
         )
         
-        # Show detailed message to user
         message_parts = []
         if created > 0:
             message_parts.append(f"Created {created} payment entries")
@@ -2153,7 +1966,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         if not payment_id:
             return "skipped"
 
-        # Prevent duplicates
         if frappe.db.exists(
             "Payment Entry",
             {"quickbooks_bill_payment_id": payment_id}
@@ -2174,7 +1986,7 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         if not vendor_id:
             return "skipped"
 
-        # Find supplier by QB ID
+    
         supplier = frappe.db.get_value(
             "Supplier",
             {"quickbooks_id": vendor_id},
@@ -2182,7 +1994,7 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         )
         
         if not supplier:
-            # Try to find by name if QB ID not found
+            
             if vendor_name:
                 supplier = frappe.db.get_value(
                     "Supplier",
@@ -2200,15 +2012,12 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         if not company:
             return "skipped"
 
-        # Get accounts - CORRECT FOR "PAY" TYPE
-        # For "Pay" type: paid_from = Bank, paid_to = Payable
         payable_account = frappe.db.get_value(
             "Company",
             company,
             "default_payable_account"
         )
 
-        # Get bank account - this should be paid_from
         bank_account = settings.default_account
         if not bank_account:
             bank_account = frappe.db.get_value(
@@ -2223,8 +2032,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         if not bank_account:
             frappe.throw(f"Default Bank Account not set. Please set in QuickBooks Settings or Company.")
 
-        # Verify the payable account matches the Purchase Invoice's payable account
-        # Get the first linked purchase invoice to check its payable account
         payable_account_to_use = payable_account
         
         # -----------------------------
@@ -2242,7 +2049,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
             if line_amount <= 0:
                 continue
             
-            # Get linked transactions
             linked_txns = line.get("LinkedTxn", [])
             if not isinstance(linked_txns, list):
                 linked_txns = [linked_txns] if linked_txns else []
@@ -2252,7 +2058,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
                     qb_bill_id = txn.get("TxnId")
                     
                     if qb_bill_id:
-                        # Find purchase invoice by QB Bill ID
                         purchase_invoice = frappe.db.get_value(
                             "Purchase Invoice",
                             {"quickbooks_id": qb_bill_id},
@@ -2263,18 +2068,15 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
                         if purchase_invoice:
                             frappe.logger().info(f"Found Purchase Invoice: {purchase_invoice.name}")
                             
-                            # Get the payable account from the Purchase Invoice
                             if purchase_invoice.credit_to:
                                 payable_account_to_use = purchase_invoice.credit_to
                                 frappe.logger().info(f"Using PI's payable account: {payable_account_to_use}")
                             
-                            # Get purchase invoice document
+                            
                             pi_doc = frappe.get_doc("Purchase Invoice", purchase_invoice.name)
                             
-                            # Calculate outstanding
                             outstanding = flt(purchase_invoice.outstanding_amount) if purchase_invoice.outstanding_amount else flt(pi_doc.grand_total)
                             
-                            # Determine allocation amount
                             allocate_amount = min(line_amount, outstanding)
                             
                             references.append({
@@ -2305,7 +2107,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
                                 f"No Purchase Invoice found with QB Bill ID: {qb_bill_id}"
                             )
         
-        # If no references found, we can't proceed
         if not references:
             frappe.logger().warning(
                 f"No purchase invoices linked to QB Bill Payment {payment_id}. "
@@ -2333,12 +2134,12 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         # -----------------------------
         pe_data = {
             "doctype": "Payment Entry",
-            "payment_type": "Pay",  # Paying to supplier
+            "payment_type": "Pay",  
             "party_type": "Supplier",
             "party": supplier,
             "company": company,
-            "paid_from": bank_account,      # Bank account where money comes FROM
-            "paid_to": payable_account_to_use,  # Payable account where money goes TO
+            "paid_from": bank_account,     
+            "paid_to": payable_account_to_use,  
             "paid_amount": total_amount,
             "received_amount": total_amount,
             "posting_date": posting_date,
@@ -2351,7 +2152,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
         
         pe = frappe.get_doc(pe_data)
 
-        # Add references to payment entry
         for ref in references:
             pe.append("references", {
                 "reference_doctype": ref["reference_doctype"],
@@ -2361,7 +2161,6 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
                 "total_amount": ref["total_amount"]
             })
         
-        # Insert the payment entry
         pe.insert(ignore_permissions=True)
         
         # -----------------------------
@@ -2373,7 +2172,7 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
                 status = "Submitted"
                 frappe.logger().info(f"Payment Entry {pe.name} submitted successfully")
                 
-                # Update the purchase invoice outstanding
+   
                 for ref in pe.references:
                     pi = frappe.get_doc("Purchase Invoice", ref.reference_name)
                     new_outstanding = flt(pi.outstanding_amount) - flt(ref.allocated_amount)
@@ -2438,7 +2237,7 @@ def get_or_create_mode_of_payment(qb_payment_method, company):
             if "cash" in qb_payment_method.lower():
                 erp_mode_name = "Cash"
             elif "check" in qb_payment_method.lower() or "cheque" in qb_payment_method.lower():
-                erp_mode_name = "Cheque"  # Use Cheque instead of Check
+                erp_mode_name = "Cheque"  
             elif "credit" in qb_payment_method.lower():
                 erp_mode_name = "Credit Card"
             elif "debit" in qb_payment_method.lower():
@@ -2446,11 +2245,11 @@ def get_or_create_mode_of_payment(qb_payment_method, company):
             elif "paypal" in qb_payment_method.lower():
                 erp_mode_name = "PayPal"
         
-        # Check if Mode of Payment exists
+     
         mode_exists = frappe.db.exists("Mode of Payment", erp_mode_name)
         
         if not mode_exists:
-            # Try alternative names
+          
             alternative_names = {
                 "Cheque": ["Check", "Bank"],
                 "Check": ["Cheque", "Bank"],
@@ -2463,11 +2262,11 @@ def get_or_create_mode_of_payment(qb_payment_method, company):
                     if frappe.db.exists("Mode of Payment", alt_name):
                         return alt_name
             
-            # If still not found, use "Cash" which is usually created by default
+            
             if frappe.db.exists("Mode of Payment", "Cash"):
                 return "Cash"
             
-            # Last resort: create it
+  
             try:
                 mode_doc = frappe.get_doc({
                     "doctype": "Mode of Payment",
@@ -2477,8 +2276,8 @@ def get_or_create_mode_of_payment(qb_payment_method, company):
                 })
                 mode_doc.insert(ignore_permissions=True)
                 frappe.db.commit()
-            except:
-                # If creation fails, return "Cash"
+            except Exception:
+              
                 erp_mode_name = "Cash"
         
         return erp_mode_name
@@ -2488,7 +2287,7 @@ def get_or_create_mode_of_payment(qb_payment_method, company):
             "Mode of Payment Error",
             f"Payment Method: {qb_payment_method}, Error: {str(e)}"
         )
-        return "Cash"  # Ultimate fallback
+        return "Cash" 
     
 
 
@@ -2527,8 +2326,7 @@ def map_erp_tax_to_qb_taxcode(erp_tax_account):
             f"(missing quickbooks_id on Account)."
         )
 
-    # Build TaxCodeRef using TaxRate
-    # QuickBooks allows dynamic tax codes using TaxRateRef
+
     return {
         "TaxRateRef": {
             "value": str(qb_taxrate_id)
@@ -2563,7 +2361,7 @@ def build_qb_tax_detail(doc):
         })
 
     return {
-        "TxnTaxCodeRef": {"value": "TAX"},  # Generic QB tax container
+        "TxnTaxCodeRef": {"value": "TAX"},  
         "TotalTax": float(total_tax),
         "TaxLine": tax_lines
     }
@@ -2595,24 +2393,24 @@ def bulk_push_sales_invoices(invoice_names=None, force_sync=False):
                 "error": "Not connected to QuickBooks"
             }
 
-        # FIX: Handle string input by converting to list
+       
         if isinstance(invoice_names, str):
             try:
-                # Try to parse as JSON if it's a JSON string
+              
                 invoice_names = json.loads(invoice_names)
-            except:
-                # If not JSON, check if it's a comma-separated string
+            except Exception:
+             
                 if ',' in invoice_names:
                     invoice_names = [name.strip() for name in invoice_names.split(',') if name.strip()]
                 else:
-                    # Single invoice name as string
+              
                     invoice_names = [invoice_names] if invoice_names else []
         
-        # Ensure it's a list
+    
         if not isinstance(invoice_names, list):
             invoice_names = []
         
-        # If no invoice names provided, get all unsynced invoices
+      
         if not invoice_names:
             invoice_names = get_unsynced_invoices()
         
@@ -2620,12 +2418,11 @@ def bulk_push_sales_invoices(invoice_names=None, force_sync=False):
             return {
                 "success": True,
                 "message": "No unsynced invoices found",
-                "success": 0,
+                "synced": 0,
                 "skipped": 0,
                 "failed": 0
             }
 
-        # Process invoices in batches to avoid timeout
         batch_size = 10
         batches = [invoice_names[i:i + batch_size] for i in range(0, len(invoice_names), batch_size)]
         
@@ -2677,12 +2474,12 @@ def bulk_push_sales_invoices(invoice_names=None, force_sync=False):
                         message=f"Invoice {invoice_name}: {str(e)}"
                     )
             
-            # Small delay between batches to avoid rate limiting
+        
             if batch_index < len(batches) - 1:
                 import time
                 time.sleep(1)
 
-        # Log the bulk push result
+   
         log_action(
             "Bulk Invoice Push Completed",
             {
@@ -2703,7 +2500,7 @@ def bulk_push_sales_invoices(invoice_names=None, force_sync=False):
             "success": total_success,
             "skipped": total_skipped,
             "failed": total_failed,
-            "success_list": success_list[:20],  # Limit response size
+            "success_list": success_list[:20], 
             "failed_list": failed_list[:20],
             "skipped_list": skipped_list[:20]
         }
@@ -2720,7 +2517,7 @@ def bulk_push_sales_invoices(invoice_names=None, force_sync=False):
         return {
             "success": False,
             "error": error_msg,
-            "success": 0,
+            "synced": 0,
             "skipped": 0,
             "failed": 0
         }
@@ -2753,14 +2550,13 @@ def process_single_invoice_push(invoice_name, force_sync=False):
         # Get invoice
         si = frappe.get_doc("Sales Invoice", invoice_name)
         
-        # Skip if not submitted
+     
         if si.docstatus != 1:
             return {
                 "status": "skipped",
                 "reason": "Invoice not submitted"
             }
-        
-        # Skip if already synced and not forcing
+      
         if si.quickbooks_id and not force_sync:
             return {
                 "status": "skipped", 
@@ -2768,14 +2564,14 @@ def process_single_invoice_push(invoice_name, force_sync=False):
                 "qb_id": si.quickbooks_id
             }
         
-        # Validate required fields
+   
         if not si.customer:
             return {
                 "status": "failed",
                 "error": "Customer not specified"
             }
         
-        # Check if customer has QB ID
+        
         qb_customer_id = frappe.db.get_value("Customer", si.customer, "quickbooks_id")
         if not qb_customer_id:
             return {
@@ -2783,7 +2579,7 @@ def process_single_invoice_push(invoice_name, force_sync=False):
                 "error": f"Customer '{si.customer}' not synced to QuickBooks"
             }
         
-        # Check items have QB IDs
+    
         for item in si.items:
             qb_item_id = frappe.db.get_value("Item", item.item_code, "quickbooks_id")
             if not qb_item_id:
@@ -2792,7 +2588,7 @@ def process_single_invoice_push(invoice_name, force_sync=False):
                     "error": f"Item '{item.item_code}' not synced to QuickBooks"
                 }
         
-        # Push to QuickBooks
+
         result = create_qb_invoice_from_sales_invoice(si)
         
         if result.get("qb_invoice_id"):
@@ -2839,7 +2635,7 @@ def retry_failed_syncs():
     Retry invoices that failed to sync
     """
     try:
-        # Get invoices with sync errors
+      
         failed_invoices = frappe.get_all(
             "Sales Invoice",
             filters={
@@ -2863,7 +2659,7 @@ def retry_failed_syncs():
             try:
                 si = frappe.get_doc("Sales Invoice", invoice.name)
                 
-                # Clear error status
+               
                 si.db_set("quickbooks_sync_error", "")
                 si.db_set("quickbooks_sync_status", "Pending")
                 
@@ -2911,16 +2707,15 @@ def create_or_update_item(qb_item):
         
         settings = get_settings()
 
-        # Check if exists
+      
         existing = frappe.db.get_value(
             "Item",
             {"quickbooks_id": item_id},
             ["name", "item_name"]
         )
 
-        # Prepare item data
         item_data = {
-            "item_code": item_name[:140],  # ERPNext limit
+            "item_code": item_name[:140], 
             "item_name": item_name,
             "description": qb_item.get('Description', '')[:255],
             "item_group": DEFAULT_ITEM_GROUP,
@@ -2931,31 +2726,25 @@ def create_or_update_item(qb_item):
             "custom_company": settings.company
         }
 
-        # Handle item type
         item_type = qb_item.get('Type', '').lower()
         if item_type == 'inventory':
             item_data["is_stock_item"] = 1
         elif item_type == 'service':
             item_data["is_stock_item"] = 0
 
-        # Add pricing
         unit_price = qb_item.get('UnitPrice')
         if unit_price is not None:
             item_data["standard_rate"] = float(unit_price)
 
-        # Add default account if set
-        settings = get_settings()
         if getattr(settings, 'default_account', None):
             item_data["income_account"] = settings.default_account
 
         if existing:
-            # Update existing item
             item = frappe.get_doc("Item", existing[0])
             item.update(item_data)
             item.save(ignore_permissions=True)
             return "updated"
         else:
-            # Create new item
             item = frappe.get_doc({
                 "doctype": "Item",
                 **item_data
@@ -2982,7 +2771,6 @@ def sync_payments():
         skipped = 0
         errors = 0
         
-        # Get payments with pagination
         start_position = 1
         max_results = 1000
         
@@ -3006,7 +2794,7 @@ def sync_payments():
                 elif result == "error":
                     errors += 1
             
-            # Check if there are more records
+        
             if len(payments) < max_results:
                 break
             
@@ -3053,7 +2841,7 @@ def create_or_update_payment_entry(qb_payment):
         if not payment_id:
             return "skipped"
 
-        # Prevent duplicates
+        
         if frappe.db.exists(
             "Payment Entry",
             {"quickbooks_payment_id": payment_id}
@@ -3146,7 +2934,6 @@ def create_or_update_payment_entry(qb_payment):
         return "error"
 
 
-# Add this helper function to map payment methods
 def map_payment_method(qb_payment_method):
     """Map QuickBooks payment method to ERPNext mode of payment"""
     payment_method_map = {
@@ -3164,22 +2951,22 @@ def map_payment_method(qb_payment_method):
         "Direct Debit": "Direct Debit"
     }
     
-    # Clean up the payment method name
+    
     if not qb_payment_method:
         return "Check"
     
     qb_payment_method = str(qb_payment_method).strip()
     
-    # Try exact match first
+
     if qb_payment_method in payment_method_map:
         return payment_method_map[qb_payment_method]
     
-    # Try case-insensitive match
+
     for qb_method, erp_method in payment_method_map.items():
         if qb_payment_method.lower() == qb_method.lower():
             return erp_method
     
-    # Check if contains keywords
+    
     qb_lower = qb_payment_method.lower()
     if "check" in qb_lower or "cheque" in qb_lower:
         return "Check"
@@ -3194,7 +2981,7 @@ def map_payment_method(qb_payment_method):
     elif "paypal" in qb_lower:
         return "PayPal"
     
-    return "Check"  # Default
+    return "Check"  
 
 @frappe.whitelist()
 def sync_recent_payments(days=7):
@@ -3517,57 +3304,14 @@ def initialize():
             }
         )
         return True
-    except:
+    except Exception:
         return False
 
-# Initialize on module load
-if frappe.db:
-    frappe.get_all("Quickbooks Setting", limit=1)
 
 
 
-@frappe.whitelist()
-def test_void_bill(bill_id):
-    """Test void a bill in QB directly"""
-    try:
-        api = QuickBooksAPI()
-        
-        # Fetch bill
-        qb_response = api.make_request(
-            f"bill/{bill_id}",
-            params={"minorversion": 65}
-        )
-        print(f"Bill fetch response: {frappe.as_json(qb_response)}")
-        
-        bill_data = qb_response.get("Bill", {})
-        sync_token = bill_data.get("SyncToken")
-        
-        if not sync_token:
-            return {"success": False, "error": "No SyncToken found", "response": qb_response}
-        
-        # Void payload
-        void_payload = {
-            "Id": str(bill_id),
-            "SyncToken": str(sync_token),
-            "sparse": True
-        }
-        
-        # Void request
-        void_response = api.make_request(
-            "bill",
-            method="POST",
-            data=void_payload,
-            params={"minorversion": 65, "operation": "void"}
-        )
-        
-        return {
-            "success": True,
-            "sync_token": sync_token,
-            "void_response": void_response
-        }
-        
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+
+
     
 
 
@@ -3576,7 +3320,7 @@ def test_void_bill(bill_id):
 def manual_create_credit_memo(sales_invoice_name):
     """Manually create Credit Memo in QB for a return Sales Invoice"""
     try:
-        import requests
+        
 
         si = frappe.get_doc("Sales Invoice", sales_invoice_name)
 
@@ -3631,7 +3375,9 @@ def manual_create_credit_memo(sales_invoice_name):
             "GlobalTaxCalculation": "TaxExcluded" if invoice_tax_rate > 0 else "NotApplicable"
         }
 
-        url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/creditmemo?minorversion=65"
+        api_obj = QuickBooksAPI()
+        base_url = api_obj.get_api_endpoint()
+        url = f"{base_url}/company/{settings.realm_id_company_id}/creditmemo?minorversion=65"
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Accept': 'application/json',
@@ -3662,7 +3408,7 @@ def manual_create_credit_memo(sales_invoice_name):
 def manual_create_vendor_credit(purchase_invoice_name):
     """Manually create Vendor Credit in QB for a return Purchase Invoice"""
     try:
-        import requests
+     
         
         pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
         
@@ -3685,7 +3431,9 @@ def manual_create_vendor_credit(purchase_invoice_name):
                 ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
             ],
             "quickbooks_id"
-        ) or "69"
+        )
+        if not qb_account_id:
+            return {"success": False, "error": "No expense account mapped to QuickBooks. Please sync accounts first via Quickbooks Setting → Sync Accounts."}
 
         lines = []
         for row in pi.items:
@@ -3712,7 +3460,9 @@ def manual_create_vendor_credit(purchase_invoice_name):
             "GlobalTaxCalculation": "NotApplicable"
         }
 
-        url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/vendorcredit?minorversion=65"
+        api_obj = QuickBooksAPI()
+        base_url = api_obj.get_api_endpoint()
+        url = f"{base_url}/company/{settings.realm_id_company_id}/vendorcredit?minorversion=65"
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Accept': 'application/json',
@@ -3757,7 +3507,7 @@ def manual_void_bill(purchase_invoice_name):
 def manual_void_payment(payment_entry_name):
     """Manually void a Payment in QB"""
     try:
-        import requests
+      
 
         pe = frappe.get_doc("Payment Entry", payment_entry_name)
         settings = get_settings()
@@ -3772,7 +3522,8 @@ def manual_void_payment(payment_entry_name):
             'Content-Type': 'application/json'
         }
 
-        base_url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}"
+        api_obj = QuickBooksAPI()
+        base_url = f"{api_obj.get_api_endpoint()}/company/{settings.realm_id_company_id}"
 
         if qb_payment_id:
             # Fetch SyncToken
@@ -3786,7 +3537,6 @@ def manual_void_payment(payment_entry_name):
             if not sync_token:
                 return {"success": False, "error": f"No SyncToken for Payment ID: {qb_payment_id}"}
 
-            # Void using sparse update
             payload = {
                 "Id": str(qb_payment_id),
                 "SyncToken": str(sync_token),
@@ -3801,7 +3551,6 @@ def manual_void_payment(payment_entry_name):
             )
 
             if response.status_code != 200:
-                # Try alternative void method
                 response = requests.post(
                     f"{base_url}/payment?minorversion=65",
                     headers=headers,
@@ -3821,7 +3570,6 @@ def manual_void_payment(payment_entry_name):
             return {"success": True, "message": f"Payment {qb_payment_id} voided successfully"}
 
         elif qb_bill_payment_id:
-            # Fetch SyncToken
             r = requests.get(
                 f"{base_url}/billpayment/{qb_bill_payment_id}?minorversion=65",
                 headers=headers
@@ -3851,68 +3599,7 @@ def manual_void_payment(payment_entry_name):
 
 
 
-@frappe.whitelist()
-def test_vendor_credit_debug(purchase_invoice_name):
-    """Debug vendor credit creation"""
-    try:
-        from quickbooks_connector.api import get_valid_access_token, get_settings
-        import requests
 
-        settings = get_settings()
-        access_token = get_valid_access_token()
-        pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
-
-        qb_vendor_id = frappe.db.get_value("Supplier", pi.supplier, "quickbooks_id")
-
-        # Find expense account
-        qb_account_id = frappe.db.get_value(
-            "Account",
-            [
-                ["company", "=", settings.company],
-                ["quickbooks_id", "!=", ""],
-                ["quickbooks_id", "!=", None],
-                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
-            ],
-            "quickbooks_id"
-        ) or "69"
-
-        lines = []
-        for row in pi.items:
-            lines.append({
-                "DetailType": "AccountBasedExpenseLineDetail",
-                "Amount": abs(float(row.amount or 0)),
-                "Description": str(row.item_code),
-                "AccountBasedExpenseLineDetail": {
-                    "AccountRef": {"value": str(qb_account_id)},
-                    "TaxCodeRef": {"value": "12"}
-                }
-            })
-
-        payload = {
-            "VendorRef": {"value": str(qb_vendor_id)},
-            "TxnDate": str(pi.posting_date),
-            "Line": lines,
-            "GlobalTaxCalculation": "NotApplicable"
-        }
-
-        url = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/vendorcredit?minorversion=65"
-        headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-
-        response = requests.post(url, headers=headers, json=payload)
-        return {
-            "status": response.status_code,
-            "payload": payload,
-            "response": response.text,
-            "vendor_id": qb_vendor_id,
-            "account_id": qb_account_id
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
     
 
 
@@ -3920,7 +3607,7 @@ def test_vendor_credit_debug(purchase_invoice_name):
 def manual_amend_invoice(sales_invoice_name):
     """Manually update QB Invoice for amended Sales Invoice"""
     try:
-        import requests
+        
         
         si = frappe.get_doc("Sales Invoice", sales_invoice_name)
         
@@ -3936,7 +3623,9 @@ def manual_amend_invoice(sales_invoice_name):
             return {"success": False, "error": f"Original invoice '{si.amended_from}' has no QB ID"}
 
         # Fetch SyncToken
-        url_get = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/invoice/{original_qb_id}?minorversion=65"
+        api_obj = QuickBooksAPI()
+        base_url = api_obj.get_api_endpoint()
+        url_get = f"{base_url}/company/{settings.realm_id_company_id}/invoice/{original_qb_id}?minorversion=65"
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Accept': 'application/json',
@@ -4000,7 +3689,7 @@ def manual_amend_invoice(sales_invoice_name):
         else:
             payload["GlobalTaxCalculation"] = "NotApplicable"
 
-        url_update = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/invoice?minorversion=65"
+        url_update = f"{base_url}/company/{settings.realm_id_company_id}/invoice?minorversion=65"
         response = requests.post(url_update, headers=headers, json=payload)
 
         if response.status_code != 200:
@@ -4021,7 +3710,7 @@ def manual_amend_invoice(sales_invoice_name):
 def manual_amend_bill(purchase_invoice_name):
     """Manually update QB Bill for amended Purchase Invoice"""
     try:
-        import requests
+
 
         pi = frappe.get_doc("Purchase Invoice", purchase_invoice_name)
 
@@ -4036,7 +3725,9 @@ def manual_amend_bill(purchase_invoice_name):
             return {"success": False, "error": f"Original invoice '{pi.amended_from}' has no QB ID"}
 
         # Fetch SyncToken
-        url_get = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/bill/{original_qb_id}?minorversion=65"
+        api_obj = QuickBooksAPI()
+        base_url = api_obj.get_api_endpoint()
+        url_get = f"{base_url}/company/{settings.realm_id_company_id}/bill/{original_qb_id}?minorversion=65"
         headers = {
             'Authorization': f'Bearer {access_token}',
             'Accept': 'application/json',
@@ -4062,7 +3753,9 @@ def manual_amend_bill(purchase_invoice_name):
                 ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
             ],
             "quickbooks_id"
-        ) or "69"
+        )
+        if not qb_account_id:
+            return {"success": False, "error": "No expense account mapped to QuickBooks. Please sync accounts first via Quickbooks Setting → Sync Accounts."}
 
         lines = []
         for row in pi.items:
@@ -4091,7 +3784,7 @@ def manual_amend_bill(purchase_invoice_name):
         if getattr(pi, "due_date", None):
             payload["DueDate"] = str(pi.due_date)
 
-        url_update = f"https://sandbox-quickbooks.api.intuit.com/v3/company/{settings.realm_id_company_id}/bill?minorversion=65"
+        url_update = f"{base_url}/company/{settings.realm_id_company_id}/bill?minorversion=65"
         response = requests.post(url_update, headers=headers, json=payload)
 
         if response.status_code != 200:

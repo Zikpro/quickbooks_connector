@@ -1,6 +1,6 @@
 frappe.listview_settings['Purchase Invoice'] = {
     get_indicator: function(doc) {
-        // Show sync status indicator
+        // sync status indicator
         if (doc.quickbooks_sync_status === "Synced") {
             return [__("Synced"), "green", "quickbooks_sync_status,=,Synced"];
         }
@@ -10,11 +10,11 @@ frappe.listview_settings['Purchase Invoice'] = {
     },
     
     onload: function(listview) {
-        // Add bulk action button
+        // bulk action button
         listview.page.add_action_item(__('Push to QuickBooks'), function() {
             const selected = listview.get_checked_items();
             
-            // Filter only unsynced invoices from selected
+    
             const unsynced_selected = selected.filter(doc => 
                 doc.docstatus === 1 && 
                 doc.quickbooks_sync_status !== "Synced"
@@ -30,7 +30,7 @@ frappe.listview_settings['Purchase Invoice'] = {
             }
             
             if (unsynced_selected.length === 0) {
-                // If nothing selected, get all unsynced invoices
+              
                 frappe.call({
                     method: 'frappe.client.get_list',
                     args: {

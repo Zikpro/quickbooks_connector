@@ -1,30 +1,30 @@
 frappe.listview_settings['Sales Invoice'] = {
     get_indicator: function(doc) {
-        // Show only Synced or Error status, remove Ready to Sync
+       
         if (doc.quickbooks_synced_status === "Synced") {
             return [__("Synced"), "green", "quickbooks_synced_status,=,Synced"];
         }
         if (doc.quickbooks_sync_error) {
             return [__("Sync Error"), "red", "quickbooks_sync_error,is,set"];
         }
-        // Remove the Ready to Sync indicator
+       
         return null;
     },
     
     onload: function(listview) {
-        // Add bulk action button only (no row-level button)
+    
         listview.page.add_action_item(__('Push to QuickBooks'), function() {
-            // Get selected items
+       
             const selected = listview.get_checked_items();
             
-            // Filter only unsynced invoices from selected
+    
             const unsynced_selected = selected.filter(doc => 
                 doc.docstatus === 1 && 
-                doc.quickbooks_synced_status !== "Synced"
+                doc.quickbooks_sync_status !== "Synced"
             );
             
             if (unsynced_selected.length === 0 && selected.length > 0) {
-                // All selected invoices are already synced
+             
                 frappe.msgprint({
                     title: __('Already Synced'),
                     message: __('All selected invoices are already synced to QuickBooks.'),
@@ -34,14 +34,15 @@ frappe.listview_settings['Sales Invoice'] = {
             }
             
             if (unsynced_selected.length === 0) {
-                // If nothing selected, get all unsynced invoices
+            
                 frappe.call({
                     method: 'frappe.client.get_list',
                     args: {
                         doctype: 'Sales Invoice',
                         filters: [
                             ['docstatus', '=', 1],
-                            ['quickbooks_synced_status', '!=', 'Synced']
+                            ['quickbooks_sync_status', '!=', 'Synced']
+
                         ],
                         fields: ['name', 'customer_name', 'grand_total', 'posting_date'],
                         limit: 1000
@@ -59,15 +60,15 @@ frappe.listview_settings['Sales Invoice'] = {
                     }
                 });
             } else {
-                // Use filtered unsynced items
+             
                 show_bulk_push_dialog(listview, unsynced_selected);
             }
         });
     }
-    // Removed the "button" section completely to remove row-level buttons
+    
 };
 
-// Helper functions
+
 function show_bulk_push_dialog(listview, invoices) {
     if (!invoices || invoices.length === 0) {
         frappe.msgprint({
@@ -83,7 +84,7 @@ function show_bulk_push_dialog(listview, invoices) {
         ? __('Push 1 invoice to QuickBooks?')
         : __('Push ' + invoices.length + ' invoices to QuickBooks?');
     
-    // Create invoice details list (simplified without currency formatting)
+ 
     const invoiceDetails = invoices.slice(0, 10).map(inv => {
         return `• ${inv.name}${inv.customer_name ? ` (${inv.customer_name})` : ''}`;
     }).join('<br>');

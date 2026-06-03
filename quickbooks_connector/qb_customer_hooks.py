@@ -1,18 +1,16 @@
 import frappe
-from frappe import _
 
 
 def on_customer_update(doc, method=None):
     """Auto sync customer address/contact to QuickBooks on update"""
     try:
-        # Check if connected
+    
         from quickbooks_connector.api import get_settings
         settings = get_settings()
 
         if not settings.is_connected:
             return
 
-        # Check if customer has QB ID
         qb_customer_id = doc.quickbooks_id
         if not qb_customer_id:
             return
@@ -33,7 +31,6 @@ def sync_customer_to_qb(doc, qb_customer_id):
 
     api = QuickBooksAPI()
 
-    # Pehle current QB customer fetch karo (SyncToken zaroori hai update ke liye)
     qb_customer = api.make_request(
         f"customer/{qb_customer_id}",
         params={"minorversion": 65}
@@ -46,12 +43,12 @@ def sync_customer_to_qb(doc, qb_customer_id):
         frappe.log_error("QB Customer Sync Error", f"No SyncToken for customer {qb_customer_id}")
         return
 
-    # Update payload banao
+    # Update payload 
     payload = {
         "Id": str(qb_customer_id),
         "SyncToken": str(sync_token),
         "DisplayName": doc.customer_name,
-        "sparse": True  # Sirf provided fields update honge
+        "sparse": True 
     }
 
     # Email update
@@ -62,8 +59,8 @@ def sync_customer_to_qb(doc, qb_customer_id):
     if doc.mobile_no:
         payload["PrimaryPhone"] = {"FreeFormNumber": doc.mobile_no}
 
-    # Address update — primary billing address dhundo
-    # Customer primary address dhundo via Dynamic Link table
+    # Address update 
+
     address_name = frappe.db.get_value(
         "Dynamic Link",
         {
@@ -74,7 +71,6 @@ def sync_customer_to_qb(doc, qb_customer_id):
         "parent"
     )
 
-    # Agar primary address set hai toh use karo
     if doc.customer_primary_address:
         address_name = doc.customer_primary_address
 
@@ -105,11 +101,9 @@ def sync_customer_to_qb(doc, qb_customer_id):
         if bill_addr:
             payload["BillAddr"] = bill_addr
 
-        # Address email bhi update karo
         if primary_address.email_id and not doc.email_id:
             payload["PrimaryEmailAddr"] = {"Address": primary_address.email_id}
 
-    # QB mein update karo
     api.make_request(
         "customer",
         method="POST",

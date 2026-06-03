@@ -20,8 +20,7 @@ def on_purchase_invoice_submit(doc, method=None):
 
 def on_purchase_invoice_cancel(doc, method=None):
     """Void Purchase Invoice Bill in QB — never blocks cancel"""
-    # QB void ko completely separate try/except mein rakho
-    # Taake koi bhi QB error ERP cancel ko block na kare
+
     try:
         settings = get_settings()
         if not settings.is_connected:
@@ -57,11 +56,10 @@ def on_purchase_invoice_cancel(doc, method=None):
         frappe.db.set_value("Purchase Invoice", doc.name, "quickbooks_sync_status", "Voided")
         frappe.db.commit()
         
-    except Exception:
-        # Koi bhi error — silently log karo, cancel kabhi block nahi hoga
+    except Exception as e:
         frappe.log_error(
             "QB Bill Void Error",
-            f"PI: {doc.name}, QB ID: {doc.quickbooks_id}"
+            f"PI: {doc.name}, QB ID: {doc.quickbooks_id}, Error: {str(e)}"
         )
 
 

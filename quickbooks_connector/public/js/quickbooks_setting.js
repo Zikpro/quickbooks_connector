@@ -85,7 +85,7 @@ function setup_quickbooks_buttons(frm) {
 
 function setup_sync_section(frm) {
     const sync_group = __("Sync");
-    const debug_group = __("Debug");
+    
 
     if (frm.doc.is_connected) {
 
@@ -184,69 +184,9 @@ function setup_sync_section(frm) {
             sync_group
         );
 
-        // DEBUG BUTTONS
-        frm.add_custom_button(
-            __("Debug Account Sync"),
-            function() {
-                frappe.call({
-                    method: "quickbooks_connector.api.debug_account_sync",
-                    callback: function(r) {
-                        if (r.message && r.message.success) {
-                            let message = `
-                                <div style="max-height: 400px; overflow-y: auto;">
-                                    <h4>QuickBooks Accounts (${r.message.qb_accounts.length}):</h4>
-                                    <pre>${JSON.stringify(r.message.qb_accounts, null, 2)}</pre>
-                                    <h4>ERPNext Accounts (${r.message.erp_accounts.length}):</h4>
-                                    <pre>${JSON.stringify(r.message.erp_accounts, null, 2)}</pre>
-                                </div>
-                            `;
-                            frappe.msgprint({ title: __("Account Debug Info"), message: message, width: 'large' });
-                        }
-                    }
-                });
-            },
-            debug_group
-        );
 
-        frm.add_custom_button(
-            __("Test Bill Creation"),
-            function() {
-                frappe.call({
-                    method: "quickbooks_connector.api.test_bill_creation",
-                    freeze: true,
-                    callback: function(r) {
-                        if (r.message && r.message.success) {
-                            let message = `
-                                <div style="max-height: 400px; overflow-y: auto;">
-                                    <h4>✅ Test Bill Created Successfully!</h4>
-                                    <p>${r.message.message}</p>
-                                    <pre style="background: #f8f9fa; padding: 10px;">${JSON.stringify(r.message.payload, null, 2)}</pre>
-                                    <pre style="background: #f8f9fa; padding: 10px;">${JSON.stringify(r.message.response, null, 2)}</pre>
-                                </div>
-                            `;
-                            frappe.msgprint({ title: __("Bill Test Successful"), message: message, width: 'large' });
-                        } else {
-                            frappe.msgprint({ title: __("Bill Test Failed"), message: r.message ? r.message.error : __("Unknown error"), indicator: "red" });
-                        }
-                    }
-                });
-            },
-            debug_group
-        );
+   
 
-        frm.add_custom_button(
-            __("Test Bill API"),
-            function() {
-                frappe.call({
-                    method: "quickbooks_connector.api.test_bill_api",
-                    freeze: true,
-                    callback: function(r) {
-                        frappe.msgprint(JSON.stringify(r.message, null, 2));
-                    }
-                });
-            },
-            debug_group
-        );
     }
 }
 

@@ -1,10 +1,11 @@
 app_name = "quickbooks_connector"
 app_title = "Quickbooks Connector"
-app_publisher = "sms"
-app_description = "connecting erpnext to quickbooks"
+app_publisher = "Zikpro Technologies"
+app_description = "Seamlessly integrate QuickBooks Online with ERPNext. Sync customers, suppliers, items, invoices and payments with UK VAT support."
+required_apps = ["frappe/erpnext"]
 app_email = "shoaibshah1255@gmail.com"
 app_license = "mit"
-# required_apps = []
+
 
 # Includes in <head>
 # ------------------
