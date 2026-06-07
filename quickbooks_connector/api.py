@@ -767,8 +767,17 @@ def create_or_update_customer(qb_customer):
      
         customer_group = DEFAULT_CUSTOMER_GROUP
         if not frappe.db.exists("Customer Group", customer_group):
-            customer_group = frappe.db.get_value("Customer Group", 
-                {"is_group": 0}, "name") or "All Customer Groups"
+            for fallback in ["All Customer Groups", "Individual", "Commercial"]:
+                if frappe.db.exists("Customer Group", fallback):
+                    customer_group = fallback
+                    break
+            else:
+                customer_group = frappe.db.get_value(
+                    "Customer Group",
+                    {"is_group": 0},
+                    "name",
+                    order_by="creation asc"
+                ) or "All Customer Groups"
 
         territory = DEFAULT_TERRITORY
         if not frappe.db.exists("Territory", territory):
@@ -808,18 +817,18 @@ def create_or_update_customer(qb_customer):
                     customer_data[erp_field] = billing_address.get(qb_field)
 
         if existing:
-        
             customer = frappe.get_doc("Customer", existing[0])
             customer.update(customer_data)
             customer.save(ignore_permissions=True)
+            _update_party_address(qb_customer.get('BillAddr', {}), "Customer", existing[0])
             return "updated"
         else:
-        
             customer = frappe.get_doc({
                 "doctype": "Customer",
                 **customer_data
             })
             customer.insert(ignore_permissions=True)
+            _update_party_address(qb_customer.get('BillAddr', {}), "Customer", customer.name)
             return "created"
 
     except Exception as e:
@@ -839,8 +848,8 @@ def create_or_update_supplier(qb_vendor):
         supplier_name = qb_vendor.get("DisplayName") or qb_vendor.get("CompanyName")
         if not supplier_name:
             return "skipped"
-        
-        settings = get_settings() 
+
+        settings = get_settings()
 
         existing = frappe.db.get_value(
             "Supplier",
@@ -856,10 +865,19 @@ def create_or_update_supplier(qb_vendor):
             "custom_company": settings.company
         }
 
+        primary_email = qb_vendor.get('PrimaryEmailAddr', {})
+        if primary_email.get('Address'):
+            supplier_data["email_id"] = primary_email.get('Address')
+
+        primary_phone = qb_vendor.get('PrimaryPhone', {})
+        if primary_phone.get('FreeFormNumber'):
+            supplier_data["mobile_no"] = primary_phone.get('FreeFormNumber')
+
         if existing:
             sup = frappe.get_doc("Supplier", existing)
             sup.update(supplier_data)
             sup.save(ignore_permissions=True)
+            _update_party_address(qb_vendor.get('BillAddr', {}), "Supplier", existing)
             return "updated"
 
         sup = frappe.get_doc({
@@ -867,11 +885,61 @@ def create_or_update_supplier(qb_vendor):
             **supplier_data
         })
         sup.insert(ignore_permissions=True)
+        _update_party_address(qb_vendor.get('BillAddr', {}), "Supplier", sup.name)
         return "created"
 
     except Exception as e:
         frappe.log_error("Supplier Sync Error", str(e))
         return "error"
+
+def _update_party_address(bill_addr, party_type, party_name):
+    """Create or update billing address for Customer or Supplier"""
+    try:
+        if not bill_addr or not bill_addr.get('Line1'):
+            return
+
+        address_name = frappe.db.get_value(
+            "Dynamic Link",
+            {
+                "link_doctype": party_type,
+                "link_name": party_name,
+                "parenttype": "Address"
+            },
+            "parent"
+        )
+
+        addr_data = {
+            "address_line1": bill_addr.get('Line1', ''),
+            "address_line2": bill_addr.get('Line2', ''),
+            "city": bill_addr.get('City', ''),
+            "state": bill_addr.get('CountrySubDivisionCode', ''),
+            "pincode": bill_addr.get('PostalCode', ''),
+            "country": bill_addr.get('Country', 'United Kingdom'),
+            "address_type": "Billing"
+        }
+
+        if address_name and frappe.db.exists("Address", address_name):
+            addr = frappe.get_doc("Address", address_name)
+            addr.update(addr_data)
+            addr.save(ignore_permissions=True)
+        else:
+            addr = frappe.get_doc({
+                "doctype": "Address",
+                "address_title": party_name,
+                "address_type": "Billing",
+                **addr_data,
+                "links": [{
+                    "link_doctype": party_type,
+                    "link_name": party_name
+                }]
+            })
+            addr.insert(ignore_permissions=True)
+
+    except Exception as e:
+        frappe.log_error(
+            f"{party_type} Address Sync Error",
+            f"{party_name}: {str(e)}"
+        )
 
 
 @frappe.whitelist()
@@ -2770,20 +2838,21 @@ def sync_payments():
         updated = 0
         skipped = 0
         errors = 0
-        
+        qb_payment_ids = set()
+
         start_position = 1
         max_results = 1000
-        
+
         while True:
             response = api.get_payments(start_position, max_results)
             query_response = response.get('QueryResponse', {})
             payments = query_response.get('Payment', [])
-            
+
             if not payments:
                 break
-            
-            # Process batch
+
             for qb_payment in payments:
+                qb_payment_ids.add(str(qb_payment.get("Id", "")))
                 result = create_or_update_payment_entry(qb_payment)
                 if result == "created":
                     created += 1
@@ -2793,13 +2862,31 @@ def sync_payments():
                     skipped += 1
                 elif result == "error":
                     errors += 1
-            
-        
+
             if len(payments) < max_results:
                 break
-            
+
             start_position += max_results
-        
+
+        # QB mein deleted payments ko ERP mein flag karo
+        try:
+            erp_payments = frappe.get_all(
+                "Payment Entry",
+                filters={
+                    "quickbooks_payment_id": ["!=", ""],
+                    "docstatus": 1
+                },
+                fields=["name", "quickbooks_payment_id"]
+            )
+            for pe in erp_payments:
+                if str(pe.quickbooks_payment_id) not in qb_payment_ids:
+                    frappe.log_error(
+                        "QB Payment Deleted",
+                        f"Payment {pe.name} (QB ID: {pe.quickbooks_payment_id}) no longer exists in QB. Please review manually."
+                    )
+        except Exception:
+            pass
+
         log_action(
             "Payments Synced",
             {
@@ -2810,7 +2897,7 @@ def sync_payments():
                 "timestamp": now_datetime()
             }
         )
-        
+
         return {
             "success": True,
             "message": f"Synced {created} new, {updated} updated payments",
@@ -2819,7 +2906,7 @@ def sync_payments():
             "skipped": skipped,
             "errors": errors
         }
-        
+
     except Exception as e:
         error_msg = str(e)
         log_action(
