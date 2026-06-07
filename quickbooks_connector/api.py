@@ -767,17 +767,15 @@ def create_or_update_customer(qb_customer):
      
         customer_group = DEFAULT_CUSTOMER_GROUP
         if not frappe.db.exists("Customer Group", customer_group):
-            for fallback in ["All Customer Groups", "Individual", "Commercial"]:
-                if frappe.db.exists("Customer Group", fallback):
-                    customer_group = fallback
-                    break
-            else:
-                customer_group = frappe.db.get_value(
-                    "Customer Group",
-                    {"is_group": 0},
-                    "name",
-                    order_by="creation asc"
-                ) or "All Customer Groups"
+            # Sirf non-group type groups dhundo
+            customer_group = frappe.db.get_value(
+                "Customer Group",
+                {"is_group": 0},
+                "name",
+                order_by="creation asc"
+            )
+            if not customer_group:
+                frappe.throw(_("No valid Customer Group found. Please create a non-group Customer Group in ERPNext."))
 
         territory = DEFAULT_TERRITORY
         if not frappe.db.exists("Territory", territory):
