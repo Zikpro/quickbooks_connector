@@ -819,7 +819,6 @@ def create_or_update_customer(qb_customer):
             customer.update(customer_data)
             customer.save(ignore_permissions=True)
             _update_party_address(qb_customer.get('BillAddr', {}), "Customer", existing[0])
-            _update_party_contact(qb_customer, "Customer", existing[0])
             return "updated"
         else:
             customer = frappe.get_doc({
@@ -828,7 +827,6 @@ def create_or_update_customer(qb_customer):
             })
             customer.insert(ignore_permissions=True)
             _update_party_address(qb_customer.get('BillAddr', {}), "Customer", customer.name)
-            _update_party_contact(qb_customer, "Customer", customer.name)
             return "created"
 
     except Exception as e:
@@ -878,7 +876,6 @@ def create_or_update_supplier(qb_vendor):
             sup.update(supplier_data)
             sup.save(ignore_permissions=True)
             _update_party_address(qb_vendor.get('BillAddr', {}), "Supplier", existing)
-            _update_party_contact(qb_vendor, "Supplier", existing)
             return "updated"
 
         sup = frappe.get_doc({
@@ -887,7 +884,6 @@ def create_or_update_supplier(qb_vendor):
         })
         sup.insert(ignore_permissions=True)
         _update_party_address(qb_vendor.get('BillAddr', {}), "Supplier", sup.name)
-        _update_party_contact(qb_vendor, "Supplier", sup.name)
         return "created"
 
     except Exception as e:
@@ -940,79 +936,6 @@ def _update_party_address(bill_addr, party_type, party_name):
     except Exception as e:
         frappe.log_error(
             f"{party_type} Address Sync Error",
-            f"{party_name}: {str(e)}"
-        )
-
-def _update_party_contact(qb_data, party_type, party_name):
-    """Create or update contact for Customer or Supplier"""
-    try:
-        primary_phone = qb_data.get('PrimaryPhone', {}).get('FreeFormNumber', '')
-        primary_email = qb_data.get('PrimaryEmailAddr', {}).get('Address', '')
-
-        if not primary_phone and not primary_email:
-            return
-
-        # Existing contact dhundo
-        contact_name = frappe.db.get_value(
-            "Dynamic Link",
-            {
-                "link_doctype": party_type,
-                "link_name": party_name,
-                "parenttype": "Contact"
-            },
-            "parent"
-        )
-
-        if contact_name and frappe.db.exists("Contact", contact_name):
-            contact = frappe.get_doc("Contact", contact_name)
-            
-            # Phone update karo
-            if primary_phone:
-                contact.phone_nos = []
-                contact.append("phone_nos", {
-                    "phone": primary_phone,
-                    "is_primary_phone": 1
-                })
-            
-            # Email update karo
-            if primary_email:
-                contact.email_ids = []
-                contact.append("email_ids", {
-                    "email_id": primary_email,
-                    "is_primary": 1
-                })
-            
-            contact.save(ignore_permissions=True)
-
-        else:
-            # Naya contact banao
-            display_name = qb_data.get('DisplayName') or qb_data.get('CompanyName') or party_name
-            contact = frappe.get_doc({
-                "doctype": "Contact",
-                "first_name": display_name,
-                "links": [{
-                    "link_doctype": party_type,
-                    "link_name": party_name
-                }]
-            })
-
-            if primary_phone:
-                contact.append("phone_nos", {
-                    "phone": primary_phone,
-                    "is_primary_phone": 1
-                })
-
-            if primary_email:
-                contact.append("email_ids", {
-                    "email_id": primary_email,
-                    "is_primary": 1
-                })
-
-            contact.insert(ignore_permissions=True)
-
-    except Exception as e:
-        frappe.log_error(
-            f"{party_type} Contact Sync Error",
             f"{party_name}: {str(e)}"
         )
 
@@ -2913,7 +2836,6 @@ def sync_payments():
         updated = 0
         skipped = 0
         errors = 0
-        cancelled = 0
         qb_payment_ids = set()
 
         start_position = 1
@@ -2938,8 +2860,6 @@ def sync_payments():
                     skipped += 1
                 elif result == "error":
                     errors += 1
-                elif result == "cancelled":
-                    cancelled += 1
 
             if len(payments) < max_results:
                 break
@@ -2970,7 +2890,6 @@ def sync_payments():
             {
                 "created": created,
                 "updated": updated,
-                "cancelled": cancelled,
                 "skipped": skipped,
                 "errors": errors,
                 "timestamp": now_datetime()
@@ -2979,10 +2898,9 @@ def sync_payments():
 
         return {
             "success": True,
-            "message": f"Synced {created} new, {cancelled} cancelled, {updated} updated payments",
+            "message": f"Synced {created} new, {updated} updated payments",
             "created": created,
             "updated": updated,
-            "cancelled": cancelled,
             "skipped": skipped,
             "errors": errors
         }
@@ -3002,52 +2920,26 @@ def sync_payments():
         }
 
 def create_or_update_payment_entry(qb_payment):
+
     try:
         payment_id = qb_payment.get("Id")
         if not payment_id:
             return "skipped"
 
-       
-        is_voided = qb_payment.get("PrivateNote", "").lower().find("voided") >= 0 or \
-                    float(qb_payment.get("TotalAmt", 1)) == 0
-
-       
-        existing_pe = frappe.db.get_value(
+        
+        if frappe.db.exists(
             "Payment Entry",
-            {"quickbooks_payment_id": str(payment_id)},
-            ["name", "docstatus"],
-            as_dict=True
-        )
-
-        if is_voided:
-            if existing_pe and existing_pe.docstatus == 1:
-                
-                try:
-                    pe_doc = frappe.get_doc("Payment Entry", existing_pe.name)
-                    pe_doc.cancel()
-                    frappe.db.commit()
-                    frappe.log_error(
-                        "QB Payment Voided — ERP Cancelled",
-                        f"Payment Entry {existing_pe.name} cancelled because QB Payment {payment_id} was voided."
-                    )
-                    return "cancelled"
-                except Exception as e:
-                    frappe.log_error(
-                        "QB Payment Cancel Error",
-                        f"Could not cancel {existing_pe.name}: {str(e)}"
-                    )
-                    return "error"
-      
+            {"quickbooks_payment_id": payment_id}
+        ):
             return "skipped"
-
-        if existing_pe:
-            return "skipped"
-
 
         total_amount = flt(qb_payment.get("TotalAmt", 0))
         if total_amount <= 0:
             return "skipped"
 
+        # -----------------------------
+        # CUSTOMER
+        # -----------------------------
         customer_id = qb_payment.get("CustomerRef", {}).get("value")
         customer = frappe.db.get_value(
             "Customer",
@@ -3064,6 +2956,7 @@ def create_or_update_payment_entry(qb_payment):
             settings.company,
             "default_receivable_account"
         )
+
         bank_account = settings.default_account
 
         if not receivable_account or not bank_account:
@@ -3072,6 +2965,9 @@ def create_or_update_payment_entry(qb_payment):
         posting_date = qb_payment.get("TxnDate")
         ref_no = qb_payment.get("PaymentRefNum") or f"QB-{payment_id}"
 
+        # -----------------------------
+        # CREATE PAYMENT ENTRY
+        # -----------------------------
         pe = frappe.get_doc({
             "doctype": "Payment Entry",
             "payment_type": "Receive",
@@ -3084,21 +2980,25 @@ def create_or_update_payment_entry(qb_payment):
             "posting_date": posting_date,
             "reference_no": ref_no,
             "reference_date": posting_date,
-            "quickbooks_payment_id": str(payment_id),
+            "quickbooks_payment_id": payment_id,
             "remarks": f"QuickBooks Payment {ref_no}",
             "references": []
         })
 
-
+        # -----------------------------
+        # ALLOCATE AGAINST INVOICE
+        # -----------------------------
         for line in qb_payment.get("Line", []):
             for txn in line.get("LinkedTxn", []):
                 if txn.get("TxnType") == "Invoice":
                     qb_invoice_id = txn.get("TxnId")
+
                     erp_invoice = frappe.db.get_value(
                         "Sales Invoice",
                         {"quickbooks_id": qb_invoice_id},
                         "name"
                     )
+
                     if erp_invoice:
                         pe.append("references", {
                             "reference_doctype": "Sales Invoice",
@@ -3108,6 +3008,7 @@ def create_or_update_payment_entry(qb_payment):
 
         pe.insert(ignore_permissions=True)
         pe.submit()
+
         return "created"
 
     except Exception as e:
