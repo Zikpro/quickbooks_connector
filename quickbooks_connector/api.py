@@ -896,6 +896,13 @@ def _update_party_address(bill_addr, party_type, party_name):
         if not bill_addr or not bill_addr.get('Line1'):
             return
 
+        # City required hai ERPNext Address mein - agar missing hai toh skip karo
+        if not bill_addr.get('City'):
+            frappe.logger().debug(
+                f"Skipping address sync for {party_type} '{party_name}': City missing from QB data"
+            )
+            return
+
         address_name = frappe.db.get_value(
             "Dynamic Link",
             {
