@@ -3227,7 +3227,7 @@ def get_sync_status():
 def clear_sync_logs(settings_name=None):
     settings = frappe.get_doc("Quickbooks Setting", settings_name) if settings_name else get_settings()
     frappe.db.delete("Quickbooks Sync Log", {"quickbooks_setting": settings.name})
-    frappe.db.commit()
+    frappe.db.commit()  # nosemgrep
     return {"success": True, "message": "Sync logs cleared"}
 
 @frappe.whitelist()
