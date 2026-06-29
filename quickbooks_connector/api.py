@@ -117,7 +117,6 @@ def oauth_callback(code=None, state=None, realmId=None, error=None):
     """Handle OAuth 2.0 callback from QuickBooks"""
     
 
-    frappe.set_user("Administrator")
     
     try:
         if error:
@@ -1633,7 +1632,7 @@ def bulk_push_purchase_invoices(invoice_names=None, force_sync=False):
             "success": True,
             "message": f"Processed {len(invoice_names)} purchase invoices",
             "total": len(invoice_names),
-            "success": total_success,
+            "synced": total_success,
             "skipped": total_skipped,
             "failed": total_failed,
             "success_list": success_list[:20],
@@ -2570,7 +2569,7 @@ def bulk_push_sales_invoices(invoice_names=None, force_sync=False):
             "success": True,
             "message": f"Processed {len(invoice_names)} invoices",
             "total": len(invoice_names),
-            "success": total_success,
+            "synced": total_success,
             "skipped": total_skipped,
             "failed": total_failed,
             "success_list": success_list[:20], 
