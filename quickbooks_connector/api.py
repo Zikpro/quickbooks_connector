@@ -8,6 +8,7 @@ from urllib.parse import urlencode, quote
 import secrets
 from datetime import timedelta
 from frappe.utils import flt
+from quickbooks_connector import qb_address, qb_tax
 
 # ============ CONSTANTS ============
 DEFAULT_CUSTOMER_TYPE = "Company"
@@ -148,6 +149,10 @@ def oauth_callback(code=None, state=None, realmId=None, error=None):
 
         test_result = test_connection()
         if test_result.get("success"):
+            # test_connection() saved its own copy of the settings (including
+            # us_uses_ast); reload so this save doesn't fail with "Document has
+            # been modified after you have opened it".
+            settings.reload()
             settings.is_connected = 1
             settings.company_name = test_result.get("company_name", "")
             settings.save(ignore_permissions=True)
@@ -502,26 +507,42 @@ def test_connection():
             frappe.throw(_("CompanyInfo missing in QuickBooks response"))
 
         company_name = company_info.get('CompanyInfo', {}).get('CompanyName', 'Unknown')
+        region_warning = qb_tax.region_country_warning(
+            settings, company_info.get('CompanyInfo', {}).get('Country')
+        )
 
         # Update settings
         settings.is_connected = 1
         settings.company_name = company_name
+
+        us_uses_ast = None
+        if qb_tax.is_us(settings):
+            us_uses_ast = fetch_us_uses_ast(api)
+            if us_uses_ast is not None:
+                settings.us_uses_ast = us_uses_ast
+
         settings.save()
         frappe.db.commit()
 
-        log_action(
-            "Connection Test Success",
-            {
-                "company": company_name,
-                "timestamp": now_datetime()
-            }
-        )
+        log_details = {
+            "company": company_name,
+            "timestamp": now_datetime()
+        }
+        if region_warning:
+            log_details["warning"] = region_warning
+        log_action("Connection Test Success", log_details)
 
-        return {
+        result = {
             "success": True,
             "company_name": company_name,
             "message": "Successfully connected to QuickBooks"
         }
+        if region_warning:
+            result["warning"] = region_warning
+            result["message"] += f". Warning: {region_warning}"
+        if us_uses_ast is not None:
+            result["us_uses_ast"] = us_uses_ast
+        return result
 
     except Exception as e:
         error_msg = str(e)
@@ -542,6 +563,45 @@ def test_connection():
             "success": False,
             "error": error_msg
         }
+
+def fetch_us_uses_ast(api):
+    """Read Preferences.TaxPrefs.PartnerTaxEnabled (Automated Sales Tax).
+
+    Returns 1/0, or None if Preferences could not be read. A failure here is
+    logged but never fails the connection test.
+    """
+    try:
+        prefs = api.make_request("preferences", params={"minorversion": 65})
+        tax_prefs = (prefs or {}).get("Preferences", {}).get("TaxPrefs", {})
+        return 1 if tax_prefs.get("PartnerTaxEnabled") else 0
+    except Exception as e:
+        frappe.log_error(
+            title="QuickBooks Preferences Error",
+            message=f"Could not read TaxPrefs.PartnerTaxEnabled: {str(e)}"
+        )
+        return None
+
+
+@frappe.whitelist()
+def get_us_tax_codes():
+    """List QuickBooks TaxCodes so a US Sales Tax Code ID can be picked."""
+    frappe.only_for("System Manager")
+    api = QuickBooksAPI()
+    response = api.make_request(
+        f"query?query={quote('SELECT * FROM TaxCode MAXRESULTS 1000')}",
+        params={"minorversion": 65}
+    )
+    codes = (response or {}).get("QueryResponse", {}).get("TaxCode", [])
+    return [
+        {
+            "Id": c.get("Id"),
+            "Name": c.get("Name"),
+            "Active": c.get("Active"),
+            "Taxable": c.get("Taxable"),
+        }
+        for c in codes
+    ]
+
 
 @frappe.whitelist()
 def disconnect():
@@ -812,10 +872,17 @@ def create_or_update_customer(qb_customer):
             for qb_field, erp_field in address_fields.items():
                 if billing_address.get(qb_field):
                     customer_data[erp_field] = billing_address.get(qb_field)
+            # ERPNext builds the primary Address from these fields, and
+            # Address.country is a Link: "USA" must become "United States".
+            customer_data["country"] = qb_address.normalize_country(
+                customer_data.get("country"), settings
+            )
 
         if existing:
             customer = frappe.get_doc("Customer", existing[0])
             customer.update(customer_data)
+            # data came from QuickBooks: don't push it straight back (on_update hook)
+            customer.flags.from_quickbooks = True
             customer.save(ignore_permissions=True)
             _update_party_address(qb_customer.get('BillAddr', {}), "Customer", existing[0])
             return "updated"
@@ -824,6 +891,7 @@ def create_or_update_customer(qb_customer):
                 "doctype": "Customer",
                 **customer_data
             })
+            customer.flags.from_quickbooks = True
             customer.insert(ignore_permissions=True)
             _update_party_address(qb_customer.get('BillAddr', {}), "Customer", customer.name)
             return "created"
@@ -918,7 +986,7 @@ def _update_party_address(bill_addr, party_type, party_name):
             "city": bill_addr.get('City', ''),
             "state": bill_addr.get('CountrySubDivisionCode', ''),
             "pincode": bill_addr.get('PostalCode', ''),
-            "country": bill_addr.get('Country', 'United Kingdom'),
+            "country": qb_address.normalize_country(bill_addr.get('Country'), get_settings()),
             "address_type": "Billing"
         }
 
@@ -1055,9 +1123,13 @@ def push_sales_invoice_to_quickbooks(sales_invoice_name: str):
 
         result = create_qb_invoice_from_sales_invoice(si)
 
+        message = f"Invoice synced to QuickBooks. QB Invoice ID: {result.get('qb_invoice_id')}"
+        if result.get("warning"):
+            message += f"<br><br>Warning: {result['warning']}"
+
         return {
             "success": True,
-            "message": f"Invoice synced to QuickBooks. QB Invoice ID: {result.get('qb_invoice_id')}",
+            "message": message,
             "qb_invoice_id": result.get("qb_invoice_id")
         }
 
@@ -1087,30 +1159,9 @@ def create_qb_invoice_from_sales_invoice(si):
         _mark_sales_invoice_sync_error(si, msg)
         frappe.throw(_(msg))
 
+    # UK: VAT code from the invoice rate. US: "TAX" / "NON".
+    tax_code_id = qb_tax.sales_line_tax_code(si, settings)
 
-    default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
-
-
-    def get_qb_tax_code(tax_rate):
-        rate = float(tax_rate or 0)
-        if rate >= 20:
-            return "3"   
-        elif rate >= 5:
-            return "8"   
-        elif rate > 0:
-            return "10"   
-        else:
-            return default_tax_code 
-
-    
-    invoice_tax_rate = 0
-    if si.taxes:
-        for tax in si.taxes:
-            if float(tax.rate or 0) > 0:
-                invoice_tax_rate = float(tax.rate)
-                break
-
-    
     lines = []
     for row in si.items:
         qb_item_id = frappe.db.get_value("Item", row.item_code, "quickbooks_id")
@@ -1118,8 +1169,6 @@ def create_qb_invoice_from_sales_invoice(si):
             msg = f"Item '{row.item_code}' missing QuickBooks ID. Sync items first."
             _mark_sales_invoice_sync_error(si, msg)
             frappe.throw(_(msg))
-
-        tax_code_id = get_qb_tax_code(invoice_tax_rate)
 
         line = {
             "DetailType": "SalesItemLineDetail",
@@ -1160,7 +1209,7 @@ def create_qb_invoice_from_sales_invoice(si):
             if addr.city:
                 bill_addr["City"] = addr.city
             if addr.state:
-                bill_addr["CountrySubDivisionCode"] = addr.state
+                bill_addr["CountrySubDivisionCode"] = qb_address.subdivision_code(addr.state, settings)
             if addr.pincode:
                 bill_addr["PostalCode"] = addr.pincode
             if addr.country:
@@ -1222,14 +1271,8 @@ def create_qb_invoice_from_sales_invoice(si):
     elif si.due_date:
         payload["DueDate"] = str(si.due_date)
 
-    # -------------------------------
-    # TAX HANDLING (QB UK FORMAT)
-    # QB automatically calculates VAT based on TaxCodeRef in line items
-    # -------------------------------
-    if invoice_tax_rate > 0:
-        payload["GlobalTaxCalculation"] = "TaxExcluded"
-    else:
-        payload["GlobalTaxCalculation"] = "NotApplicable"
+    # Tax handling per region (UK: GlobalTaxCalculation, US: TxnTaxDetail)
+    qb_tax.apply_sales_tax(payload, si, settings)
 
     # Create invoice in QB
     qb_response = api.make_request("invoice", method="POST", data=payload, params={"minorversion": 65})
@@ -1245,12 +1288,19 @@ def create_qb_invoice_from_sales_invoice(si):
         _mark_sales_invoice_sync_error(si, msg)
         frappe.throw(_(msg))
 
+    qb_invoice = _complete_us_ast_override(
+        payload, qb_invoice, si, settings,
+        lambda update: api.make_request(
+            "invoice", method="POST", data=update, params={"minorversion": 65}
+        ).get("Invoice")
+    )
+    tax_warning = _us_sales_tax_warning(qb_invoice, si, settings, "Invoice")
 
     si.db_set("quickbooks_id", qb_invoice_id)
     si.db_set("quickbooks_doc_number", doc_number)
     si.db_set("quickbooks_last_sync", now_datetime())
-    si.db_set("quickbooks_sync_status", "Synced")
-    si.db_set("quickbooks_sync_error", "")
+    si.db_set("quickbooks_sync_status", SYNC_STATUS_WARNING if tax_warning else "Synced")
+    si.db_set("quickbooks_sync_error", tax_warning or "")
 
     log_action(
         "ERPNext Invoice -> QuickBooks Created",
@@ -1263,7 +1313,10 @@ def create_qb_invoice_from_sales_invoice(si):
         entity_id=qb_invoice_id
     )
 
-    return {"qb_invoice_id": qb_invoice_id}
+    result = {"qb_invoice_id": qb_invoice_id}
+    if tax_warning:
+        result["warning"] = tax_warning
+    return result
 
 
 
@@ -1292,6 +1345,24 @@ def push_purchase_invoice_to_quickbooks(purchase_invoice_name: str):
         frappe.log_error("QuickBooks Bill Push Error", f"{purchase_invoice_name}: {str(e)}")
         return {"success": False, "error": str(e)}
 
+def get_qb_expense_account_id(settings):
+    """QuickBooks Id of the expense account used on Bill / VendorCredit lines.
+
+    The previous filter combined ["quickbooks_id", "!=", ""] with
+    ["quickbooks_id", "!=", None]. frappe.db.get_value keeps one condition per
+    field, and "!= NULL" matches no row, so no account was ever found.
+    """
+    return frappe.db.get_value(
+        "Account",
+        [
+            ["company", "=", settings.company],
+            ["quickbooks_id", "is", "set"],
+            ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
+        ],
+        "quickbooks_id"
+    )
+
+
 def create_qb_bill_from_purchase_invoice(pi):
     """
     Purchase Invoice -> QuickBooks Bill
@@ -1313,38 +1384,9 @@ def create_qb_bill_from_purchase_invoice(pi):
 
     frappe.logger().info(f"Supplier: {pi.supplier}, QB Vendor ID: {qb_vendor_id}")
 
-    default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
+    invoice_tax_rate = qb_tax.invoice_tax_rate(pi)
 
-    def get_qb_tax_code(tax_rate):
-        rate = float(tax_rate or 0)
-        if rate >= 20:
-            return "3"   
-        elif rate >= 5:
-            return "8"   
-        elif rate > 0:
-            return "10"  
-        else:
-            return default_tax_code  
-
-
-    invoice_tax_rate = 0
-    if pi.taxes:
-        for tax in pi.taxes:
-            if float(tax.rate or 0) > 0:
-                invoice_tax_rate = float(tax.rate)
-                break
-
-    
-    qb_account_id = frappe.db.get_value(
-        "Account",
-        [
-            ["company", "=", settings.company],
-            ["quickbooks_id", "!=", ""],
-            ["quickbooks_id", "!=", None],
-            ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
-        ],
-        "quickbooks_id"
-    )
+    qb_account_id = get_qb_expense_account_id(settings)
 
 
     if not qb_account_id:
@@ -1352,9 +1394,8 @@ def create_qb_bill_from_purchase_invoice(pi):
 
     frappe.logger().info(f"Using QB account ID: {qb_account_id} for purchase invoice {pi.name}")
 
-    
-    tax_code_id = get_qb_tax_code(invoice_tax_rate)
-
+    # UK: VAT code from the invoice rate. US: None (bills take no line tax codes).
+    tax_code_id = qb_tax.expense_line_tax_code(pi, settings)
 
     lines = []
     for idx, row in enumerate(pi.items):
@@ -1362,14 +1403,7 @@ def create_qb_bill_from_purchase_invoice(pi):
             "DetailType": "AccountBasedExpenseLineDetail",
             "Amount": float(row.amount or 0),
             "Description": f"{row.item_code}: {row.description or row.item_name or ''}",
-            "AccountBasedExpenseLineDetail": {
-                "AccountRef": {
-                    "value": qb_account_id
-                },
-                "TaxCodeRef": {
-                    "value": tax_code_id
-                }
-            }
+            "AccountBasedExpenseLineDetail": qb_tax.expense_line_detail(qb_account_id, tax_code_id)
         }
         lines.append(line)
 
@@ -1387,16 +1421,9 @@ def create_qb_bill_from_purchase_invoice(pi):
         "Line": lines
     }
 
-    # -------------------------------
-    # TAX HANDLING (QB UK FORMAT)
-    # QB automatically calculates VAT based on TaxCodeRef in line items
-    # -------------------------------
-    if invoice_tax_rate > 0:
-        payload["GlobalTaxCalculation"] = "TaxExcluded"
-    else:
-        payload["GlobalTaxCalculation"] = "NotApplicable"
+    # Tax handling per region (UK: GlobalTaxCalculation, US: extra tax line)
+    qb_tax.apply_purchase_tax(payload, pi, settings, qb_account_id)
 
-    
     if pi.name:
         payload["DocNumber"] = pi.name
 
@@ -1474,7 +1501,7 @@ def _mark_purchase_invoice_sync_success(pi, qb_bill_id=None, doc_number=None):
     
         try:
             meta = frappe.get_meta("Purchase Invoice")
-            if hasattr(meta, 'quickbooks_sync_status'):
+            if meta.has_field('quickbooks_sync_status'):  # hasattr(meta, ...) was always False
                 update_fields["quickbooks_sync_status"] = "Synced"
         except Exception:
             pass
@@ -1502,7 +1529,7 @@ def _mark_purchase_invoice_sync_error(pi, error_message: str):
     
         try:
             meta = frappe.get_meta("Purchase Invoice")
-            if hasattr(meta, 'quickbooks_sync_status'):
+            if meta.has_field('quickbooks_sync_status'):  # hasattr(meta, ...) was always False
                 update_fields["quickbooks_sync_status"] = "Error"
         except Exception:
             pass
@@ -2132,7 +2159,8 @@ def create_or_update_bill_payment_entry(qb_bill_payment):
                     if qb_bill_id:
                         purchase_invoice = frappe.db.get_value(
                             "Purchase Invoice",
-                            {"quickbooks_id": qb_bill_id},
+                            # an amended bill shares the QB id with the cancelled original
+                            {"quickbooks_id": qb_bill_id, "docstatus": 1},
                             ["name", "outstanding_amount", "grand_total", "credit_to"],
                             as_dict=True
                         )
@@ -2361,93 +2389,6 @@ def get_or_create_mode_of_payment(qb_payment_method, company):
         )
         return "Cash" 
     
-
-
-def extract_erp_taxes(doc):
-    """
-    Extract ERPNext tax rows safely
-    Works for Sales Invoice and Purchase Invoice
-    """
-    taxes = []
-    if hasattr(doc, "taxes") and doc.taxes:
-        for t in doc.taxes:
-            if flt(t.tax_amount) != 0 and t.account_head:
-                taxes.append({
-                    "account": t.account_head,
-                    "amount": flt(t.tax_amount),
-                    "rate": flt(t.rate),
-                    "description": t.description or t.account_head
-                })
-    return taxes
-
-
-def map_erp_tax_to_qb_taxcode(erp_tax_account):
-    """
-    Map ERP tax account → QuickBooks TaxRate → TaxCode
-    Uses Account.quickbooks_id as TaxRate ID
-    """
-    qb_taxrate_id = frappe.db.get_value(
-        "Account",
-        erp_tax_account,
-        "quickbooks_id"
-    )
-
-    if not qb_taxrate_id:
-        frappe.throw(
-            f"Tax Account '{erp_tax_account}' not mapped to QuickBooks "
-            f"(missing quickbooks_id on Account)."
-        )
-
-
-    return {
-        "TaxRateRef": {
-            "value": str(qb_taxrate_id)
-        }
-    }
-
-
-def build_qb_tax_detail(doc):
-    """
-    Build QuickBooks TxnTaxDetail object from ERP taxes
-    """
-    erp_taxes = extract_erp_taxes(doc)
-
-    if not erp_taxes:
-        return None
-
-    tax_lines = []
-    total_tax = 0
-
-    for tax in erp_taxes:
-        tax_code = map_erp_tax_to_qb_taxcode(tax["account"])
-        total_tax += tax["amount"]
-
-        tax_lines.append({
-            "Amount": float(tax["amount"]),
-            "DetailType": "TaxLineDetail",
-            "TaxLineDetail": {
-                "TaxRateRef": tax_code["TaxRateRef"],
-                "PercentBased": True,
-                "TaxPercent": float(tax["rate"])
-            }
-        })
-
-    return {
-        "TxnTaxCodeRef": {"value": "TAX"},  
-        "TotalTax": float(total_tax),
-        "TaxLine": tax_lines
-    }
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ============ ENHANCED BULK PUSH FUNCTIONS ============
@@ -2761,6 +2702,62 @@ def retry_failed_syncs():
 
 
 
+def _complete_us_ast_override(sent_payload, entity, doc, settings, post_update):
+    """Finish Intuit's AST override when the TaxCode was only known after the
+    Invoice / CreditMemo was created (US, AST on, no us_sales_tax_code).
+
+    post_update(update) sends the sparse update and returns the updated entity.
+    Never raises, since the document already exists in QuickBooks. Returns the
+    latest entity.
+    """
+    try:
+        update = qb_tax.ast_override_update(sent_payload, entity, doc, settings)
+        if not update:
+            return entity
+        return post_update(update) or entity
+    except Exception as e:
+        frappe.log_error(
+            title="QuickBooks AST Override Error",
+            message=f"{doc.name}: {str(e)}"
+        )
+        return entity
+
+
+SYNC_STATUS_WARNING = "Synced with Warning"
+
+
+def _us_sales_tax_warning(entity, doc, settings, entity_type):
+    """US only: warning text if QuickBooks' TotalTax differs from ERPNext's
+    sales tax by more than 0.01, else None. The sync itself is kept; the
+    mismatch is logged so it can be reviewed in QuickBooks.
+    """
+    mismatch = qb_tax.tax_mismatch(entity, doc, settings)
+    if not mismatch:
+        return None
+    qb_total, erp_total = mismatch
+    message = (
+        f"Sales tax mismatch: QuickBooks TotalTax {qb_total:.2f}, "
+        f"ERPNext sales tax {erp_total:.2f}. Synced; please review the "
+        f"tax in QuickBooks."
+    )
+    qb_id = entity.get("Id")
+    frappe.logger().warning(f"QuickBooks sales tax mismatch for {doc.name}: {message}")
+    log_action(
+        "QuickBooks Sales Tax Mismatch",
+        {
+            "document": doc.name,
+            "qb_id": qb_id,
+            "qb_total_tax": qb_total,
+            "erpnext_total_tax": erp_total,
+        },
+        status="Info",
+        entity_type=entity_type,
+        entity_id=qb_id,
+        error=message
+    )
+    return message
+
+
 def _mark_sales_invoice_sync_error(si, error_message: str):
     try:
         si.db_set("quickbooks_last_sync", now_datetime())
@@ -2976,6 +2973,9 @@ def create_or_update_payment_entry(qb_payment):
         # -----------------------------
         pe = frappe.get_doc({
             "doctype": "Payment Entry",
+            # without company ERPNext uses the user's default company and then
+            # can't find the invoice ("has already been fully paid")
+            "company": settings.company,
             "payment_type": "Receive",
             "party_type": "Customer",
             "party": customer,
@@ -2999,9 +2999,10 @@ def create_or_update_payment_entry(qb_payment):
                 if txn.get("TxnType") == "Invoice":
                     qb_invoice_id = txn.get("TxnId")
 
+                    # an amended invoice shares the QB id with the cancelled original
                     erp_invoice = frappe.db.get_value(
                         "Sales Invoice",
-                        {"quickbooks_id": qb_invoice_id},
+                        {"quickbooks_id": qb_invoice_id, "docstatus": 1},
                         "name"
                     )
 
@@ -3425,21 +3426,7 @@ def manual_create_credit_memo(sales_invoice_name):
         if not qb_customer_id:
             return {"success": False, "error": f"Customer '{si.customer}' missing QB ID"}
 
-        default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
-
-        def get_qb_tax_code(tax_rate):
-            rate = float(tax_rate or 0)
-            if rate >= 20: return "3"
-            elif rate >= 5: return "8"
-            elif rate > 0: return "10"
-            return default_tax_code
-
-        invoice_tax_rate = 0
-        if si.taxes:
-            for tax in si.taxes:
-                if float(tax.rate or 0) > 0:
-                    invoice_tax_rate = float(tax.rate)
-                    break
+        tax_code_id = qb_tax.sales_line_tax_code(si, settings)
 
         lines = []
         for row in si.items:
@@ -3454,7 +3441,7 @@ def manual_create_credit_memo(sales_invoice_name):
                     "ItemRef": {"value": str(qb_item_id)},
                     "Qty": abs(float(row.qty)),
                     "UnitPrice": float(row.rate),
-                    "TaxCodeRef": {"value": get_qb_tax_code(invoice_tax_rate)}
+                    "TaxCodeRef": {"value": tax_code_id}
                 }
             })
 
@@ -3463,8 +3450,8 @@ def manual_create_credit_memo(sales_invoice_name):
             "DocNumber": str(si.name),
             "TxnDate": str(si.posting_date),
             "Line": lines,
-            "GlobalTaxCalculation": "TaxExcluded" if invoice_tax_rate > 0 else "NotApplicable"
         }
+        qb_tax.apply_sales_tax(payload, si, settings)
 
         api_obj = QuickBooksAPI()
         base_url = api_obj.get_api_endpoint()
@@ -3480,16 +3467,31 @@ def manual_create_credit_memo(sales_invoice_name):
         if response.status_code != 200:
             return {"success": False, "error": f"QB Error: {response.text}"}
 
-        credit_memo_id = response.json().get("CreditMemo", {}).get("Id")
+        credit_memo = response.json().get("CreditMemo", {})
+        credit_memo_id = credit_memo.get("Id")
         if not credit_memo_id:
             return {"success": False, "error": "No ID in response"}
 
+        def post_credit_memo_update(update):
+            r = requests.post(url, headers=headers, json=update)
+            if r.status_code != 200:
+                raise Exception(f"QB Error: {r.text}")
+            return r.json().get("CreditMemo")
+
+        credit_memo = _complete_us_ast_override(
+            payload, credit_memo, si, settings, post_credit_memo_update
+        )
+        tax_warning = _us_sales_tax_warning(credit_memo, si, settings, "CreditMemo")
+
         frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_id", credit_memo_id)
-        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_status", "Synced")
-        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_status", SYNC_STATUS_WARNING if tax_warning else "Synced")
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_error", tax_warning or "")
         frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_last_sync", frappe.utils.now_datetime())
 
-        return {"success": True, "message": f"Credit Memo created in QB. ID: {credit_memo_id}"}
+        message = f"Credit Memo created in QB. ID: {credit_memo_id}"
+        if tax_warning:
+            message += f"<br><br>Warning: {tax_warning}"
+        return {"success": True, "message": message}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -3513,18 +3515,15 @@ def manual_create_vendor_credit(purchase_invoice_name):
         if not qb_vendor_id:
             return {"success": False, "error": f"Supplier '{pi.supplier}' missing QB ID"}
 
-        qb_account_id = frappe.db.get_value(
-            "Account",
-            [
-                ["company", "=", settings.company],
-                ["quickbooks_id", "!=", ""],
-                ["quickbooks_id", "!=", None],
-                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
-            ],
-            "quickbooks_id"
-        )
+        qb_account_id = get_qb_expense_account_id(settings)
         if not qb_account_id:
             return {"success": False, "error": "No expense account mapped to QuickBooks. Please sync accounts first via Quickbooks Setting → Sync Accounts."}
+
+        # NOTE: looks like a bug - UK vendor credits always send TaxCodeRef "12"
+        # and GlobalTaxCalculation "NotApplicable", ignoring the invoice's VAT
+        # rate (create_qb_bill_from_purchase_invoice maps the rate). Kept as-is
+        # so UK payloads do not change.
+        tax_code_id = qb_tax.expense_line_tax_code(pi, settings, uk_fixed="12")
 
         lines = []
         for row in pi.items:
@@ -3535,10 +3534,7 @@ def manual_create_vendor_credit(purchase_invoice_name):
                 "DetailType": "AccountBasedExpenseLineDetail",
                 "Amount": amount,
                 "Description": str(row.item_code),
-                "AccountBasedExpenseLineDetail": {
-                    "AccountRef": {"value": str(qb_account_id)},
-                    "TaxCodeRef": {"value": "12"}
-                }
+                "AccountBasedExpenseLineDetail": qb_tax.expense_line_detail(str(qb_account_id), tax_code_id)
             })
 
         if not lines:
@@ -3548,8 +3544,10 @@ def manual_create_vendor_credit(purchase_invoice_name):
             "VendorRef": {"value": str(qb_vendor_id)},
             "TxnDate": str(pi.posting_date),
             "Line": lines,
-            "GlobalTaxCalculation": "NotApplicable"
         }
+        qb_tax.apply_purchase_tax(
+            payload, pi, settings, str(qb_account_id), uk_fixed_global="NotApplicable"
+        )
 
         api_obj = QuickBooksAPI()
         base_url = api_obj.get_api_endpoint()
@@ -3733,21 +3731,7 @@ def manual_amend_invoice(sales_invoice_name):
         if not qb_customer_id:
             return {"success": False, "error": f"Customer '{si.customer}' missing QB ID"}
 
-        default_tax_code = getattr(settings, 'default_tax_code', '12') or '12'
-
-        def get_qb_tax_code(tax_rate):
-            rate = float(tax_rate or 0)
-            if rate >= 20: return "3"
-            elif rate >= 5: return "8"
-            elif rate > 0: return "10"
-            return default_tax_code
-
-        invoice_tax_rate = 0
-        if si.taxes:
-            for tax in si.taxes:
-                if float(tax.rate or 0) > 0:
-                    invoice_tax_rate = float(tax.rate)
-                    break
+        tax_code_id = qb_tax.sales_line_tax_code(si, settings)
 
         lines = []
         for row in si.items:
@@ -3762,7 +3746,7 @@ def manual_amend_invoice(sales_invoice_name):
                     "ItemRef": {"value": str(qb_item_id)},
                     "Qty": float(row.qty),
                     "UnitPrice": float(row.rate),
-                    "TaxCodeRef": {"value": get_qb_tax_code(invoice_tax_rate)}
+                    "TaxCodeRef": {"value": tax_code_id}
                 }
             })
 
@@ -3775,10 +3759,10 @@ def manual_amend_invoice(sales_invoice_name):
             "Line": lines
         }
 
-        if invoice_tax_rate > 0:
-            payload["GlobalTaxCalculation"] = "TaxExcluded"
-        else:
-            payload["GlobalTaxCalculation"] = "NotApplicable"
+        # AST: reuse the TaxCode QuickBooks already put on this invoice
+        qb_tax.apply_sales_tax(
+            payload, si, settings, qb_tax_code=qb_tax.returned_tax_code(invoice_data)
+        )
 
         url_update = f"{base_url}/company/{settings.realm_id_company_id}/invoice?minorversion=65"
         response = requests.post(url_update, headers=headers, json=payload)
@@ -3786,12 +3770,26 @@ def manual_amend_invoice(sales_invoice_name):
         if response.status_code != 200:
             return {"success": False, "error": f"QB Error: {response.text}"}
 
+        def post_invoice_update(update):
+            r = requests.post(url_update, headers=headers, json=update)
+            if r.status_code != 200:
+                raise Exception(f"QB Error: {r.text}")
+            return r.json().get("Invoice")
+
+        updated_invoice = _complete_us_ast_override(
+            payload, response.json().get("Invoice", {}), si, settings, post_invoice_update
+        )
+        tax_warning = _us_sales_tax_warning(updated_invoice, si, settings, "Invoice")
+
         frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_id", original_qb_id)
-        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_status", "Synced")
-        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_error", "")
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_status", SYNC_STATUS_WARNING if tax_warning else "Synced")
+        frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_sync_error", tax_warning or "")
         frappe.db.set_value("Sales Invoice", sales_invoice_name, "quickbooks_last_sync", frappe.utils.now_datetime())
 
-        return {"success": True, "message": f"QB Invoice {original_qb_id} updated successfully"}
+        message = f"QB Invoice {original_qb_id} updated successfully"
+        if tax_warning:
+            message += f"<br><br>Warning: {tax_warning}"
+        return {"success": True, "message": message}
 
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -3835,18 +3833,15 @@ def manual_amend_bill(purchase_invoice_name):
         if not qb_vendor_id:
             return {"success": False, "error": f"Supplier '{pi.supplier}' missing QB ID"}
 
-        qb_account_id = frappe.db.get_value(
-            "Account",
-            [
-                ["company", "=", settings.company],
-                ["quickbooks_id", "!=", ""],
-                ["quickbooks_id", "!=", None],
-                ["account_type", "in", ["Expense Account", "Cost of Goods Sold"]]
-            ],
-            "quickbooks_id"
-        )
+        qb_account_id = get_qb_expense_account_id(settings)
         if not qb_account_id:
             return {"success": False, "error": "No expense account mapped to QuickBooks. Please sync accounts first via Quickbooks Setting → Sync Accounts."}
+
+        # NOTE: looks like a bug - UK amended bills always send TaxCodeRef "12"
+        # and GlobalTaxCalculation "NotApplicable", ignoring the invoice's VAT
+        # rate (create_qb_bill_from_purchase_invoice maps the rate). Kept as-is
+        # so UK payloads do not change.
+        tax_code_id = qb_tax.expense_line_tax_code(pi, settings, uk_fixed="12")
 
         lines = []
         for row in pi.items:
@@ -3857,10 +3852,7 @@ def manual_amend_bill(purchase_invoice_name):
                 "DetailType": "AccountBasedExpenseLineDetail",
                 "Amount": amount,
                 "Description": str(row.item_code),
-                "AccountBasedExpenseLineDetail": {
-                    "AccountRef": {"value": str(qb_account_id)},
-                    "TaxCodeRef": {"value": "12"}
-                }
+                "AccountBasedExpenseLineDetail": qb_tax.expense_line_detail(str(qb_account_id), tax_code_id)
             })
 
         payload = {
@@ -3869,8 +3861,10 @@ def manual_amend_bill(purchase_invoice_name):
             "VendorRef": {"value": str(qb_vendor_id)},
             "TxnDate": str(pi.posting_date),
             "Line": lines,
-            "GlobalTaxCalculation": "NotApplicable"
         }
+        qb_tax.apply_purchase_tax(
+            payload, pi, settings, str(qb_account_id), uk_fixed_global="NotApplicable"
+        )
 
         if getattr(pi, "due_date", None):
             payload["DueDate"] = str(pi.due_date)

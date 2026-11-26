@@ -4,6 +4,9 @@ frappe.listview_settings['Sales Invoice'] = {
         if (doc.quickbooks_synced_status === "Synced") {
             return [__("Synced"), "green", "quickbooks_synced_status,=,Synced"];
         }
+        if (doc.quickbooks_sync_status === "Synced with Warning") {
+            return [__("QB Tax Warning"), "orange", "quickbooks_sync_status,=,Synced with Warning"];
+        }
         if (doc.quickbooks_sync_error) {
             return [__("Sync Error"), "red", "quickbooks_sync_error,is,set"];
         }
@@ -20,7 +23,7 @@ frappe.listview_settings['Sales Invoice'] = {
     
             const unsynced_selected = selected.filter(doc => 
                 doc.docstatus === 1 && 
-                doc.quickbooks_sync_status !== "Synced"
+                !["Synced", "Synced with Warning"].includes(doc.quickbooks_sync_status)
             );
             
             if (unsynced_selected.length === 0 && selected.length > 0) {
@@ -41,7 +44,7 @@ frappe.listview_settings['Sales Invoice'] = {
                         doctype: 'Sales Invoice',
                         filters: [
                             ['docstatus', '=', 1],
-                            ['quickbooks_sync_status', '!=', 'Synced']
+                            ['quickbooks_sync_status', 'not in', ['Synced', 'Synced with Warning']]
 
                         ],
                         fields: ['name', 'customer_name', 'grand_total', 'posting_date'],

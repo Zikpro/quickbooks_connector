@@ -3,7 +3,7 @@ name = "quickbooks_connector"
 authors = [
     { name = "Zikpro Technologies", email = "shoaibshah1255@gmail.com"}
 ]
-description = "Seamlessly integrate QuickBooks Online with ERPNext. Sync customers, suppliers, items, invoices and payments with UK VAT support."
+description = "Seamlessly integrate QuickBooks Online with ERPNext. Sync customers, suppliers, items, invoices and payments with UK VAT and US sales tax support."
 requires-python = ">=3.10"
 readme = "README.md"
 dynamic = ["version"]

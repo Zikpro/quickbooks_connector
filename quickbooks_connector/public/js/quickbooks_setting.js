@@ -17,6 +17,10 @@ frappe.ui.form.on("Quickbooks Setting", {
 
     environment: function(frm) {
         toggle_environment_fields(frm);
+    },
+
+    qb_region: function(frm) {
+        frm.refresh();
     }
 });
 
@@ -80,7 +84,52 @@ function setup_quickbooks_buttons(frm) {
                 button_group
             );
         }
+
+        if (frm.doc.qb_region === "US") {
+            frm.add_custom_button(
+                __("Fetch US Tax Codes"),
+                function() { fetch_us_tax_codes(frm); },
+                button_group
+            );
+        }
     }
+}
+
+function fetch_us_tax_codes(frm) {
+    frappe.call({
+        method: "quickbooks_connector.api.get_us_tax_codes",
+        freeze: true,
+        freeze_message: __("Fetching tax codes from QuickBooks..."),
+        callback: function(r) {
+            const codes = (r.message || []).filter(c => c.Active !== false);
+            if (!codes.length) {
+                frappe.msgprint({ title: __("No Tax Codes"), message: __("No active TaxCodes were returned by QuickBooks."), indicator: "orange" });
+                return;
+            }
+            const options = codes.map(c => ({
+                value: String(c.Id),
+                label: `${c.Name} (Id ${c.Id})${c.Taxable === false ? " - " + __("non-taxable") : ""}`
+            }));
+            const dialog = new frappe.ui.Dialog({
+                title: __("Select US Sales Tax Code"),
+                fields: [{
+                    fieldname: "tax_code",
+                    fieldtype: "Select",
+                    label: __("QuickBooks Tax Code"),
+                    options: options,
+                    default: frm.doc.us_sales_tax_code || options[0].value,
+                    reqd: 1
+                }],
+                primary_action_label: __("Set"),
+                primary_action: function(values) {
+                    frm.set_value("us_sales_tax_code", values.tax_code);
+                    dialog.hide();
+                    frappe.show_alert({ message: __("US Sales Tax Code set. Save the form to keep it."), indicator: "green" });
+                }
+            });
+            dialog.show();
+        }
+    });
 }
 
 function setup_sync_section(frm) {
@@ -333,7 +382,15 @@ function test_quickbooks_connection(frm) {
         freeze_message: __("Testing QuickBooks connection..."),
         callback: function(r) {
             if (r.message && r.message.success) {
-                frappe.msgprint({ title: __("Connection Successful"), message: __("Successfully connected to: ") + `<b>${r.message.company_name}</b>`, indicator: "green" });
+                let message = __("Successfully connected to: ") + `<b>${r.message.company_name}</b>`;
+                if (r.message.warning) {
+                    message += "<br><br>" + __("Warning: ") + frappe.utils.escape_html(r.message.warning);
+                }
+                frappe.msgprint({
+                    title: __("Connection Successful"),
+                    message: message,
+                    indicator: r.message.warning ? "orange" : "green"
+                });
                 frm.reload_doc();
             } else {
                 frappe.msgprint({ title: __("Connection Failed"), message: r.message ? (r.message.error || __("Unknown error")) : __("Server error"), indicator: "red" });

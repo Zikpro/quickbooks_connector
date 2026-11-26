@@ -26,7 +26,22 @@
   "token_expiry",
   "default_country",
   "company",
-  "default_tax_code"
+  "default_tax_code",
+  "section_break_region",
+  "qb_region",
+  "us_sales_tax_code",
+  "us_uses_ast",
+  "section_break_sync",
+  "sync_accounts",
+  "sync_customers",
+  "sync_items",
+  "sync_suppliers",
+  "sync_payments",
+  "sync_bill_payments",
+  "column_break_sync",
+  "enable_auto_sync",
+  "auto_sync_sales_invoice",
+  "auto_sync_purchase_invoice"
  ],
  "fields": [
   {
@@ -162,11 +177,103 @@
    "fieldtype": "Data",
    "label": "Default QB Tax Code ID",
    "description": "QuickBooks Tax Code ID to use when no tax is mapped (e.g. 12 for No VAT)"
-}
+  },
+  {
+   "fieldname": "section_break_region",
+   "fieldtype": "Section Break",
+   "label": "Region & Sales Tax"
+  },
+  {
+   "default": "UK",
+   "fieldname": "qb_region",
+   "fieldtype": "Select",
+   "label": "QuickBooks Region",
+   "options": "UK\nUS",
+   "description": "UK uses VAT tax codes on each line. US uses TAX/NON on lines and a transaction-level sales tax code."
+  },
+  {
+   "depends_on": "eval:doc.qb_region == 'US'",
+   "fieldname": "us_sales_tax_code",
+   "fieldtype": "Data",
+   "label": "US Sales Tax Code ID",
+   "description": "QuickBooks TaxCode Id sent as TxnTaxCodeRef on taxed US invoices when Automated Sales Tax is off. Use 'Fetch US Tax Codes' to pick one."
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.qb_region == 'US'",
+   "fieldname": "us_uses_ast",
+   "fieldtype": "Check",
+   "label": "Uses Automated Sales Tax (AST)",
+   "read_only": 1,
+   "description": "Read from QuickBooks Preferences (TaxPrefs.PartnerTaxEnabled) on Test Connection."
+  },
+  {
+   "fieldname": "section_break_sync",
+   "fieldtype": "Section Break",
+   "label": "Sync Options"
+  },
+  {
+   "default": "1",
+   "fieldname": "sync_accounts",
+   "fieldtype": "Check",
+   "label": "Sync Accounts in Sync All"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_customers",
+   "fieldtype": "Check",
+   "label": "Sync Customers in Sync All"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_items",
+   "fieldtype": "Check",
+   "label": "Sync Items in Sync All"
+  },
+  {
+   "default": "0",
+   "fieldname": "sync_suppliers",
+   "fieldtype": "Check",
+   "label": "Sync Suppliers in Sync All"
+  },
+  {
+   "default": "1",
+   "fieldname": "sync_payments",
+   "fieldtype": "Check",
+   "label": "Sync Payments in Sync All"
+  },
+  {
+   "default": "1",
+   "fieldname": "sync_bill_payments",
+   "fieldtype": "Check",
+   "label": "Sync Bill Payments in Sync All"
+  },
+  {
+   "fieldname": "column_break_sync",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "enable_auto_sync",
+   "fieldtype": "Check",
+   "label": "Enable Daily Auto Sync"
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_sync_sales_invoice",
+   "fieldtype": "Check",
+   "label": "Auto Push Sales Invoice on Submit"
+  },
+  {
+   "default": "0",
+   "fieldname": "auto_sync_purchase_invoice",
+   "fieldtype": "Check",
+   "label": "Auto Push Purchase Invoice on Submit"
+  }
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-04-04 00:00:00.000000",
+ "modified": "2026-11-25 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Quickbooks Connector",
  "name": "Quickbooks Setting",
